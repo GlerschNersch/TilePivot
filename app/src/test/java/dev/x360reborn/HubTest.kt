@@ -230,6 +230,27 @@ class HubTest {
         assertEquals(listOf("home", "games", "music", "apps", "settings"), games.channels.map { it.title })
     }
 
+    @Test fun gridIconsFillTheirTile() {
+        // The standard 174x130 tile: 56 design px before 0.4.1, 96 (55% of width) after.
+        assertEquals(96f, Metrics.gridIconSize(174f, 130f, hasSub = false), 0f)
+        // Two-line tiles keep room for the sub: height-capped at 80 (46% of width).
+        assertEquals(80f, Metrics.gridIconSize(174f, 130f, hasSub = true), 0f)
+        // Wide home slots share the grid tiles' height cap, so a row sits evenly.
+        assertEquals(96f, Metrics.gridIconSize(231f, 130f, hasSub = false), 0f)
+        // Narrower tiles follow the width fraction instead.
+        assertEquals(58f, Metrics.gridIconSize(100f, 130f, hasSub = false), 0f)
+    }
+
+    @Test fun heroIconsGrowButKeepTheLabelClear() {
+        // Matt's phone portrait hero (708x264, with a sub): 121 before, 194 after.
+        assertEquals(194f, Metrics.heroIconSize(708f, 264f, hasSub = true), 0f)
+        assertEquals(205.92f, Metrics.heroIconSize(708f, 264f, hasSub = false), 0.01f)
+        // The icon always fits above the hero's label block.
+        val h = 198f
+        val icon = Metrics.heroIconSize(352f, h, hasSub = true)
+        assertTrue(icon <= Metrics.heroIconAreaH(h, hasSub = true))
+    }
+
     @Test fun focusCurveMatchesTimeline() {
         assertEquals(1.08f, Motion.scale(1f, -1f), 1e-5f)
         assertEquals(1f, Motion.scale(1f, Metrics.PRESS_DOWN_FRAMES * Metrics.FRAME_MS), 1e-4f)

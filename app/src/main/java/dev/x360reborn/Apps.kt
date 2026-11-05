@@ -42,7 +42,9 @@ class Apps(private val context: Context) {
 
     /** Renders missing icons, [first] keys before the rest; calls [progress] every few icons. */
     fun loadIcons(first: List<String>, progress: () -> Unit) {
-        val iconPx = (context.resources.displayMetrics.density * 64).toInt().coerceAtLeast(96)
+        // 0.4.1 draws icons much larger (the hero especially), so rasterise above the old
+        // 64dp grid size to keep them sharp; capped so the all-apps cache stays reasonable.
+        val iconPx = (context.resources.displayMetrics.density * 96).toInt().coerceIn(192, 288)
         val order = LinkedHashSet(first).apply { addAll(activities.keys) }
         var n = 0
         for (key in order) {

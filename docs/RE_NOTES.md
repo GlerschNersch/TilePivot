@@ -121,6 +121,27 @@ on resume after a launch. The system splash is blanked (aura-coloured, no icon) 
   value); on this heavily-loaded AVD the aura-coloured starting window can sit for several
   seconds before the first hub frame.
 
+## App v0.4.1 (2026-11-05): larger tile icons
+
+- Matt's feedback on 0.4.0: app icons filled only about a third of their tile (Chrome
+  measured 32% of tile width on the emulator's medium grid; the portrait hero's icon was
+  ~17-21% of the panel). Icon sizing now lives in two pure functions in `Metrics`:
+  `gridIconSize(w, h, hasSub)` = 58% of tile width, capped by the height above the label
+  block (34, or 50 with a sub line), and `heroIconSize(w, h, hasSub)` = the largest edge
+  that fits above the hero's label block (44% of width / 78% of height caps). Standard
+  174x130 grid tiles draw at 96 (55% of width; 80 / 46% on two-line tiles where the label
+  block caps the height); the portrait phone hero goes 121 -> 194. A literal doubling of
+  the hero icon would collide with its label text, so the label block is the hard limit.
+- `HomeView.drawSmall` / `drawHero` use the new sizes; the code-drawn glyphs (gamepad,
+  gear, search, folder, palette, tile-size) scale off the same size, proportions unchanged.
+  Verified on the emulator in all three tile sizes plus the Midnight theme; measured
+  after-ratio on the medium apps grid: 55.1% (was 32.2%).
+- Icon bitmaps are rasterised larger in `Apps.loadIcons` (density x 96, clamped to
+  192..288 px, up from density x 64) so the bigger draws stay sharp; rendering stays on
+  the loader thread.
+- Unit tests: 31 total (HubTest 23, including grid/hero icon sizing; GamesTest 8), all
+  passing.
+
 ## Next
 - Twist focus glow fine-tuning and channel-switch timing against real footage (the glow and the
   transitions are implemented from the measured scene timelines, but never compared side-by-side

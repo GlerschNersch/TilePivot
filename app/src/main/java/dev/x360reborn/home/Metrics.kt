@@ -124,6 +124,42 @@ object Metrics {
 
     /** XUI point sizes are 72-dpi points against a 96-dpi design grid. */
     fun pt(points: Float) = points * 4f / 3f
+
+    // Tile icons. App bitmaps and the code-drawn glyphs share one size per tile, so a grid of
+    // mixed asset/glyph tiles sits evenly. Up to 0.4.0 every grid icon was a fixed 56 design
+    // px -- about a third of the 174-wide tile -- which read as a small icon on a big button.
+    const val ICON_FRACTION = 0.58f
+    /** Height reserved under a grid tile's icon: the label line, plus the sub line if any. */
+    const val LABEL_BLOCK = 34f
+    const val LABEL_BLOCK_SUB = 50f
+
+    /**
+     * Grid-tile icon edge: [ICON_FRACTION] of the tile's width, capped by the height left
+     * above the label block so the icon never crowds the text. The standard 174x130 tile
+     * gets 96 (55% of its width); a two-line tile is height-capped at 80 (46%).
+     */
+    fun gridIconSize(tileW: Float, tileH: Float, hasSub: Boolean): Float {
+        val block = if (hasSub) LABEL_BLOCK_SUB else LABEL_BLOCK
+        return min(tileW * ICON_FRACTION, tileH - block)
+    }
+
+    /** Height of the hero's label block: primary line, plus the secondary line if any. */
+    const val HERO_BLOCK = 44f
+    const val HERO_BLOCK_SUB = 64f
+
+    /**
+     * Hero icon edge: as large as the panel takes -- bounded by 44% of its width, 78% of its
+     * height, and the room above the label block. The portrait phone hero (708x264, with a
+     * sub) gets 194, up from 121 under the old 0.46 x min(w, h) rule; a literal doubling
+     * would run into the hero's own label text.
+     */
+    fun heroIconSize(w: Float, h: Float, hasSub: Boolean): Float {
+        val block = if (hasSub) HERO_BLOCK_SUB else HERO_BLOCK
+        return min(w * 0.44f, min(h * 0.78f, h - block - 6f))
+    }
+
+    /** Height of the hero area above its label block; the hero icon centres in it. */
+    fun heroIconAreaH(h: Float, hasSub: Boolean) = h - (if (hasSub) HERO_BLOCK_SUB else HERO_BLOCK)
 }
 
 data class Template(

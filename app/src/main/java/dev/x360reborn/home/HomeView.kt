@@ -401,10 +401,11 @@ class HomeView(
         canvas.drawRect(rect, fill)
         fill.shader = null
 
-        val icon = 56f
+        val icon = Metrics.gridIconSize(b.w, b.h, tile.sub.isNotEmpty())
         val ix = (b.w - icon) / 2f
         // Tiles with a sub (folder sizes, game formats) give the text block a second line.
-        val iy = (b.h - (if (tile.sub.isEmpty()) 34f else 50f) - icon) / 2f + 4f
+        val block = if (tile.sub.isEmpty()) Metrics.LABEL_BLOCK else Metrics.LABEL_BLOCK_SUB
+        val iy = (b.h - block - icon) / 2f + 4f
         drawIcon(canvas, tile, ix, iy, icon)
         val text = TextUtils.ellipsize(tile.label, label, b.w - 20f, TextUtils.TruncateAt.END)
         if (tile.sub.isEmpty()) {
@@ -421,8 +422,9 @@ class HomeView(
     private fun drawHero(canvas: Canvas, tile: Tile, b: Box) {
         fill.color = Metrics.SLOT_DARK
         canvas.drawRect(rect, fill)
-        val icon = min(b.w, b.h) * 0.46f
-        drawIcon(canvas, tile, (b.w - icon) / 2f, b.h * 0.40f - icon / 2f, icon)
+        val icon = Metrics.heroIconSize(b.w, b.h, tile.sub.isNotEmpty())
+        val areaH = Metrics.heroIconAreaH(b.h, tile.sub.isNotEmpty())
+        drawIcon(canvas, tile, (b.w - icon) / 2f, (areaH - icon) / 2f, icon)
         // mobyslot: gradient from 170/320 of the height, primary 17 pt, secondary 16 pt.
         fill.shader = LinearGradient(0f, b.h * 170f / 320f, 0f, b.h, 0x00000000, 0xC0000000.toInt(), Shader.TileMode.CLAMP)
         canvas.drawRect(0f, b.h * 170f / 320f, b.w, b.h, fill)
