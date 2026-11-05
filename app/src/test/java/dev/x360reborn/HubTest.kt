@@ -2,6 +2,7 @@ package dev.x360reborn
 
 import dev.x360reborn.home.AppInfo
 import dev.x360reborn.home.BgStyle
+import dev.x360reborn.home.Box
 import dev.x360reborn.home.Category
 import dev.x360reborn.home.FolderInfo
 import dev.x360reborn.home.Glyph
@@ -272,6 +273,22 @@ class HubTest {
         assertEquals(0f, same.top, 0.01f)
         assertEquals(348f, same.width, 0.01f)
         assertEquals(260f, same.height, 0.01f)
+    }
+
+    @Test fun hoverChromeMatchesMeasuredLandscapePositions() {
+        // HubSceneStandard: back 55,27 / home 610,27 / search 1165,27, all 60x60 at 1280 wide.
+        val boxes = Metrics.hoverChromeBoxes(1280f, portrait = false, twistX = 153f)
+        assertEquals(Box(55f, 27f, 60f, 60f), boxes[0])
+        assertEquals(Box(610f, 27f, 60f, 60f), boxes[1])
+        assertEquals(Box(1165f, 27f, 60f, 60f), boxes[2])
+    }
+
+    @Test fun hoverChromePortraitStaysOnScreen() {
+        val boxes = Metrics.hoverChromeBoxes(420f, portrait = true, twistX = 34f)
+        assertEquals(3, boxes.size)
+        assertEquals(48f, boxes[0].w, 0.001f)
+        assertTrue(boxes.all { it.x >= 0f && it.right <= 420f && it.y >= 0f })
+        assertTrue(boxes[0].right <= boxes[1].x && boxes[1].right <= boxes[2].x)
     }
 
     @Test fun gridGlyphsDrawLargeOnFilledTiles() {

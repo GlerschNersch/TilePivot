@@ -179,6 +179,92 @@ class HomeView(
 
     // ---- layout ------------------------------------------------------------------------------
 
+    /** Fade the hover chrome toward its target; true while it is still moving. */
+    private fun stepChrome(dt: Float): Boolean {
+        val target = if (hovering && !away) 1f else 0f
+        if (chromeAlpha == target) return false
+        chromeAlpha = if (target > chromeAlpha) min(1f, chromeAlpha + dt / CHROME_FADE_MS)
+        else max(0f, chromeAlpha - dt / CHROME_FADE_MS)
+        return chromeAlpha != target
+    }
+
+    /**
+     * Kinect hover chrome (HubSceneStandard): back / home / search hover targets, 60x60
+     * at (55,27), (610,27) and (1165,27) in the landscape design space; portrait keeps the
+     * row at 48 px along the top (see [Metrics.hoverChromeBoxes]). Like the dash's Kinect
+     * buttons it is pointer chrome only: it fades in while a mouse or stylus hovers the hub
+     * and lights under the pointer; touch and gamepad never see it and keep their own paths
+     * to the same three actions. Colours come from the theme like everything else.
+     */
+    private fun drawHoverChrome(canvas: Canvas) {
+        val boxes = Metrics.hoverChromeBoxes(L.w, L.portrait, L.twistX)
+        chromeBoxes.clear()
+        boxes.forEach { chromeBoxes += RectF(it.x, it.y, it.right, it.bottom) }
+        if (chromeAlpha <= 0f) return
+        for ((i, b) in boxes.withIndex()) {
+            val hot = hovering && b.contains(hoverPos.first, hoverPos.second)
+            fill.color = Metrics.SLOT_DARK
+            fill.alpha = (170 * chromeAlpha).roundToInt()
+            canvas.drawRoundRect(b.x, b.y, b.right, b.bottom, 10f, 10f, fill)
+            fill.style = Paint.Style.STROKE
+            fill.strokeWidth = 1.5f
+            fill.color = Metrics.TEXT
+            fill.alpha = (110 * chromeAlpha).roundToInt()
+            canvas.drawRoundRect(b.x, b.y, b.right, b.bottom, 10f, 10f, fill)
+            fill.style = Paint.Style.FILL
+            if (hot) { // the button under the pointer lights, like a focused slot
+                fill.color = Color.WHITE
+                fill.alpha = (38 * chromeAlpha).roundToInt()
+                canvas.drawRoundRect(b.x, b.y, b.right, b.bottom, 10f, 10f, fill)
+            }
+            fill.color = Metrics.TEXT
+            fill.alpha = (235 * chromeAlpha).roundToInt()
+            drawChromeGlyph(canvas, i, b.cx, b.cy, min(b.w, b.h))
+        }
+        fill.alpha = 255
+    }
+
+    /** The three hover-chrome glyphs, stroked in the fill colour: back arrow, home, search. */
+    private fun drawChromeGlyph(canvas: Canvas, which: Int, cx: Float, cy: Float, size: Float) {
+        fill.style = Paint.Style.STROKE
+        fill.strokeWidth = size * 0.085f
+        val u = size / 2f
+        when (which) {
+            0 -> { // back: a left-pointing arrow
+                canvas.drawLine(cx - u * 0.55f, cy, cx + u * 0.6f, cy, fill)
+                canvas.drawLine(cx - u * 0.55f, cy, cx - u * 0.05f, cy - u * 0.5f, fill)
+                canvas.drawLine(cx - u * 0.55f, cy, cx - u * 0.05f, cy + u * 0.5f, fill)
+            }
+            1 -> { // home: a roof over a simple house body
+                canvas.drawLine(cx - u * 0.62f, cy - u * 0.05f, cx, cy - u * 0.6f, fill)
+                canvas.drawLine(cx, cy - u * 0.6f, cx + u * 0.62f, cy - u * 0.05f, fill)
+                canvas.drawLine(cx - u * 0.42f, cy + u * 0.05f, cx - u * 0.42f, cy + u * 0.58f, fill)
+                canvas.drawLine(cx + u * 0.42f, cy + u * 0.05f, cx + u * 0.42f, cy + u * 0.58f, fill)
+                canvas.drawLine(cx - u * 0.42f, cy + u * 0.58f, cx + u * 0.42f, cy + u * 0.58f, fill)
+            }
+            else -> { // search: a magnifier, the search tile's geometry
+                val r = size * 0.27f
+                val mx = cx - size * 0.08f
+                val my = cy - size * 0.08f
+                canvas.drawCircle(mx, my, r, fill)
+                canvas.drawLine(mx + r * 0.72f, my + r * 0.72f, cx + size * 0.4f, cy + size * 0.4f, fill)
+            }
+        }
+        fill.style = Paint.Style.FILL
+    }
+
+    override fun onHoverEvent(e: MotionEvent): Boolean {
+        when (e.action) {
+            MotionEvent.ACTION_HOVER_ENTER, MotionEvent.ACTION_HOVER_MOVE -> {
+                hovering = !away
+                hoverPos = toDesign(e.x, e.y)
+            }
+            MotionEvent.ACTION_HOVER_EXIT -> hovering = false
+        }
+        invalidate()
+        return true
+    }
+
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) = relayout()
 
     private fun relayout() {
@@ -255,6 +341,7 @@ class HomeView(
         lastFrame = now
         var animating = stepScroll(now)
         animating = stepFocus(dt) || animating
+        animating = stepChrome(dt) || animating
 
         canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), bgPaint)
         val cp = channelPos()
@@ -287,6 +374,7 @@ class HomeView(
         drawTwist(canvas, cp, now)
         if (transforming) canvas.restore()
         canvas.drawText(hubClock(), L.clockX, L.clockY, clockText)
+        drawHoverChrome(canvas)
         canvas.restore()
 
         if (trans != null) animating = true
@@ -796,10 +884,18 @@ class HomeView(
         const val BADGE_SIDE = 0.92f
         /** Gap between a filled tile's corner and its badge canvas. */
         const val BADGE_INSET = 3f
+        /** Hover chrome fade, in and out. */
+        const val CHROME_FADE_MS = 150f
     }
 
     private val slop = ViewConfiguration.get(context).scaledTouchSlop
     private val longPressMs = ViewConfiguration.getLongPressTimeout().toLong()
+    // Kinect hover chrome: fades in while a pointer hovers the hub (see drawHoverChrome).
+    private var hovering = false
+    private var hoverPos = Pair(0f, 0f)
+    private var chromeAlpha = 0f
+    private val chromeBoxes = ArrayList<RectF>()
+
     private var downX = 0f
     private var downY = 0f
     private var downScroll = 0f
@@ -923,6 +1019,18 @@ class HomeView(
 
     private fun tap(x: Float, y: Float) {
         val (dx, dy) = toDesign(x, y)
+        if (chromeAlpha > 0.5f) { // hover chrome first: it floats above the hub
+            for ((i, r) in chromeBoxes.withIndex()) {
+                if (r.contains(dx, dy)) {
+                    when (i) {
+                        0 -> back()
+                        1 -> goToChannel(0, false)
+                        else -> onSearch("")
+                    }
+                    return
+                }
+            }
+        }
         for ((i, r) in twistBoxes.withIndex()) {
             if (r.contains(dx, dy)) { goToChannel(i, false); return }
         }

@@ -215,6 +215,34 @@ object Metrics {
     /** Edge of the box a drawn glyph occupies on a filled grid tile: large and centred. */
     const val GLYPH_FRACTION = 0.85f
     fun gridGlyphSize(tileW: Float, tileH: Float) = min(tileW, tileH) * GLYPH_FRACTION
+
+    // Kinect hover chrome (HubSceneStandard): back, home and search hover targets along
+    // the top of the hub, 60x60 each. Back sits at x=55, home is centred (610 at 1280
+    // wide), search ends 55 from the right edge (1165 at 1280 wide); all at y=27.
+    const val HOVER_SIZE = 60f
+    const val HOVER_Y = 27f
+    const val HOVER_BACK_X = 55f
+    const val HOVER_EDGE = 55f
+    /** Portrait (our own layout) keeps the same row at 48 px, tucked into the top band. */
+    const val HOVER_SIZE_PORTRAIT = 48f
+    const val HOVER_Y_PORTRAIT = 8f
+
+    /** The three hover-chrome boxes in order: back, home, search. */
+    fun hoverChromeBoxes(w: Float, portrait: Boolean, twistX: Float): List<Box> {
+        if (portrait) {
+            val s = HOVER_SIZE_PORTRAIT
+            return listOf(
+                Box(twistX, HOVER_Y_PORTRAIT, s, s),
+                Box((w - s) / 2f, HOVER_Y_PORTRAIT, s, s),
+                Box(w - twistX - s, HOVER_Y_PORTRAIT, s, s),
+            )
+        }
+        return listOf(
+            Box(HOVER_BACK_X, HOVER_Y, HOVER_SIZE, HOVER_SIZE),
+            Box((w - HOVER_SIZE) / 2f, HOVER_Y, HOVER_SIZE, HOVER_SIZE),
+            Box(w - HOVER_EDGE - HOVER_SIZE, HOVER_Y, HOVER_SIZE, HOVER_SIZE),
+        )
+    }
 }
 
 data class Template(
