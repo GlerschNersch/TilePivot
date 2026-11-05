@@ -143,6 +143,38 @@ object Metrics {
         return min(tileW * ICON_FRACTION, tileH - block)
     }
 
+    /** Smallest relative size a fitted label may shrink to before it wraps instead. */
+    const val LABEL_MIN_SCALE = 0.62f
+
+    /** One extra label line's height, reserved when a long settings label wraps to two. */
+    const val LABEL_LINE_H = 17f
+
+    /**
+     * Shrink-to-fit factor for one line of text: 1 when [fullWidth] already fits
+     * [availWidth], otherwise the ratio that would fit, floored at [LABEL_MIN_SCALE] so
+     * the text stays legible (callers wrap instead of shrinking past the floor).
+     */
+    fun labelScale(fullWidth: Float, availWidth: Float): Float =
+        if (fullWidth <= 0f || fullWidth <= availWidth) 1f
+        else (availWidth / fullWidth).coerceIn(LABEL_MIN_SCALE, 1f)
+
+    /**
+     * Splits a long label into two lines: after the ": " state separator when the label
+     * has one ("xbox 360 games: grant folder access" -> "xbox 360 games:" / "grant folder
+     * access"), else at the space nearest the middle. Null when there is no space to
+     * split at (callers keep the one-line ellipsized form then).
+     */
+    fun splitLabel(text: String): Pair<String, String>? {
+        val colon = text.indexOf(": ")
+        if (colon in 1 until text.length - 2) {
+            return text.substring(0, colon + 1) to text.substring(colon + 2)
+        }
+        val spaces = text.indices.filter { text[it] == ' ' }
+        if (spaces.isEmpty()) return null
+        val at = spaces.minByOrNull { kotlin.math.abs(it - text.length / 2) } ?: return null
+        return text.substring(0, at) to text.substring(at + 1)
+    }
+
     /** Height of the hero's label block: primary line, plus the secondary line if any. */
     const val HERO_BLOCK = 44f
     const val HERO_BLOCK_SUB = 64f

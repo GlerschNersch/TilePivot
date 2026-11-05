@@ -419,22 +419,47 @@ class HomeView(
     private fun drawLabeled(canvas: Canvas, tile: Tile, b: Box) {
         drawTileBody(canvas, b)
 
-        val icon = Metrics.gridIconSize(b.w, b.h, tile.sub.isNotEmpty())
+        // Settings labels carry state and must stay fully readable: the line shrinks to
+        // fit (down to Metrics.LABEL_MIN_SCALE), and a label that still cannot fit wraps
+        // to two lines instead of ellipsizing -- "xbox 360 games: N found" was cut off at
+        // every tile size before this. Tiles with a sub keep the one-line ellipsized form.
+        val avail = b.w - 20f
+        val full = label.measureText(tile.label)
+        val scale = Metrics.labelScale(full, avail)
+        val wrapped = if (tile.sub.isEmpty() && full * Metrics.LABEL_MIN_SCALE > avail) {
+            Metrics.splitLabel(tile.label)
+        } else null
+        // Tiles with a sub (folder sizes, game formats) give the text block a second line;
+        // a wrapped label reserves one more line of its own.
+        val block = when {
+            tile.sub.isNotEmpty() -> Metrics.LABEL_BLOCK_SUB
+            wrapped != null -> Metrics.LABEL_BLOCK + Metrics.LABEL_LINE_H
+            else -> Metrics.LABEL_BLOCK
+        }
+        val icon = min(Metrics.gridIconSize(b.w, b.h, tile.sub.isNotEmpty()), b.h - block - 6f)
         val ix = (b.w - icon) / 2f
-        // Tiles with a sub (folder sizes, game formats) give the text block a second line.
-        val block = if (tile.sub.isEmpty()) Metrics.LABEL_BLOCK else Metrics.LABEL_BLOCK_SUB
         val iy = (b.h - block - icon) / 2f + 4f
         drawIcon(canvas, tile, ix, iy, icon)
-        val text = TextUtils.ellipsize(tile.label, label, b.w - 20f, TextUtils.TruncateAt.END)
+        if (wrapped != null) {
+            canvas.drawText(wrapped.first, 10f, b.h - 12f - Metrics.LABEL_LINE_H, label)
+            canvas.drawText(wrapped.second, 10f, b.h - 12f, label)
+            return
+        }
+        val baseSize = label.textSize
+        if (scale < 1f) label.textSize = baseSize * scale
+        val text = if (scale < 1f) tile.label
+            else TextUtils.ellipsize(tile.label, label, avail, TextUtils.TruncateAt.END)
         if (tile.sub.isEmpty()) {
             canvas.drawText(text, 0, text.length, 10f, b.h - 12f, label)
         } else {
             canvas.drawText(text, 0, text.length, 10f, b.h - 28f, label)
+            label.textSize = baseSize
             label.color = Metrics.TEXT_DIM
             val sub = TextUtils.ellipsize(tile.sub, label, b.w - 20f, TextUtils.TruncateAt.END)
             canvas.drawText(sub, 0, sub.length, 10f, b.h - 10f, label)
             label.color = Metrics.TEXT
         }
+        label.textSize = baseSize
     }
 
     /**

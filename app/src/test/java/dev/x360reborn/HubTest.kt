@@ -290,6 +290,26 @@ class HubTest {
         assertTrue(icon <= Metrics.heroIconAreaH(h, hasSub = true))
     }
 
+    @Test fun labelScaleFitsOrFloors() {
+        // Already fits: no shrink. Barely over: shrinks by exactly the ratio.
+        assertEquals(1f, Metrics.labelScale(100f, 154f), 0f)
+        assertEquals(0.77f, Metrics.labelScale(200f, 154f), 0.01f)
+        // Far too wide: stops at the floor so callers wrap instead of shrinking further.
+        assertEquals(Metrics.LABEL_MIN_SCALE, Metrics.labelScale(400f, 154f), 0f)
+        assertEquals(1f, Metrics.labelScale(0f, 154f), 0f)
+    }
+
+    @Test fun splitLabelPrefersTheStateColon() {
+        assertEquals(
+            "xbox 360 games:" to "grant folder access",
+            Metrics.splitLabel("xbox 360 games: grant folder access"),
+        )
+        assertEquals("theme:" to "xbox green", Metrics.splitLabel("theme: xbox green"))
+        // No separator: split at the space nearest the middle; no space at all: no split.
+        assertEquals("hello wide" to "world", Metrics.splitLabel("hello wide world"))
+        assertEquals(null, Metrics.splitLabel("oneword"))
+    }
+
     @Test fun focusCurveMatchesTimeline() {
         assertEquals(1.08f, Motion.scale(1f, -1f), 1e-5f)
         assertEquals(1f, Motion.scale(1f, Metrics.PRESS_DOWN_FRAMES * Metrics.FRAME_MS), 1e-4f)
