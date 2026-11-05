@@ -1,5 +1,6 @@
 package dev.x360reborn
 
+import dev.x360reborn.home.Anim
 import dev.x360reborn.home.AppInfo
 import dev.x360reborn.home.BgStyle
 import dev.x360reborn.home.Box
@@ -331,5 +332,65 @@ class HubTest {
         assertEquals(1.08f, Motion.scale(1f, -1f), 1e-5f)
         assertEquals(1f, Motion.scale(1f, Metrics.PRESS_DOWN_FRAMES * Metrics.FRAME_MS), 1e-4f)
         assertEquals(Metrics.FLASH_PEAK, Motion.flash(Metrics.FLASH_PEAK_AT, true), 1e-5f)
+    }
+
+    @Test fun cascadeDelayRunsDiagonallyFromTopLeft() {
+        assertEquals(0f, Anim.delayFor(0, 0), 0f)
+        // The wave is diagonal: a step right costs the same as a step down.
+        assertEquals(Anim.delayFor(1, 0), Anim.delayFor(0, 1), 0f)
+        assertEquals(Anim.delayFor(2, 1), Anim.delayFor(1, 2), 0f)
+        assertEquals(3 * Anim.STAGGER_MS, Anim.delayFor(2, 1), 0f)
+    }
+
+    @Test fun cascadeProgressWaitsForDelayAndEndsOnTime() {
+        val d = Anim.delayFor(1, 1)
+        assertEquals(0f, Anim.progress(d - 1f, d), 0f)
+        assertEquals(0f, Anim.progress(d, d), 0f)
+        assertEquals(0.5f, Anim.progress(d + Anim.TILE_MS / 2, d), 0.001f)
+        assertEquals(1f, Anim.progress(d + Anim.TILE_MS, d), 0f)
+        assertEquals(1f, Anim.progress(d + Anim.TILE_MS * 3, d), 0f)
+    }
+
+    @Test fun cascadeEntryStartsSmallAndLowAndSettlesExact() {
+        val (s0, r0) = Anim.entryAt(0f, 0f)
+        assertEquals(Anim.FROM_SCALE, s0, 0.0001f)
+        assertEquals(Anim.RISE, r0, 0.0001f)
+        // Before its delay a tile still sits at the start pose.
+        val (s2, r2) = Anim.entryAt(10f, 100f)
+        assertEquals(Anim.FROM_SCALE, s2, 0.0001f)
+        assertEquals(Anim.RISE, r2, 0.0001f)
+        // Settled is exactly rest, so the end state matches the un-animated layout.
+        val (s1, r1) = Anim.entryAt(Anim.TILE_MS, 0f)
+        assertEquals(1f, s1, 0.0001f)
+        assertEquals(0f, r1, 0.0001f)
+    }
+
+    @Test fun cascadeOvershootIsSingleBoundedAndSmall() {
+        var peak = 0f
+        var peaks = 0
+        var prev = Anim.entryAt(0f, 0f).first
+        var falling = false
+        val steps = 260
+        var minRise = 0f
+        for (i in 1..steps) {
+            val (s, r) = Anim.entryAt(Anim.TILE_MS * i / steps, 0f)
+            if (s > peak) peak = s
+            if (!falling && s < prev) { peaks++; falling = true }
+            if (r < minRise) minRise = r
+            prev = s
+        }
+        assertTrue("overshoot should read (peak $peak)", peak > 1f)
+        assertTrue("overshoot stays a landing, not jelly (peak $peak)", peak <= 1.04f)
+        assertEquals(1, peaks)
+        // The rise overshoots upward by less than 2 px before returning to 0.
+        assertTrue("rise overshoot bounded ($minRise)", minRise > -2f)
+    }
+
+    @Test fun cascadeTotalCoversTheLastTile() {
+        val d = Anim.delayFor(3, 4)
+        assertEquals(d + Anim.TILE_MS, Anim.totalMs(d), 0f)
+        assertEquals(1f, Anim.progress(Anim.totalMs(d), d), 0f)
+        // The deepest tile of a full portrait page (row 4, col 3) settles in ~600 ms.
+        assertTrue(Anim.totalMs(Anim.delayFor(4, 3)) <= 600f)
     }
 }

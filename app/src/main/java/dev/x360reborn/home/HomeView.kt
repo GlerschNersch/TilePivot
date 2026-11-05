@@ -13,6 +13,7 @@ import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
 import android.os.SystemClock
+import android.provider.Settings
 import android.text.TextPaint
 import android.text.TextUtils
 import android.view.KeyEvent
@@ -113,6 +114,15 @@ class HomeView(
     private var scrollStart = -1L
     private val scrollMs = 450f
 
+    // Channel-entry cascade (0.5.1): when a channel becomes active, its landing page's
+    // tiles pop in on a diagonal wave (see Anim). Purely visual -- input is never gated
+    // on it -- and it leaves no redraw loop behind once settled.
+    private var cascadePage = -1
+    private var cascadeStart = 0L
+    private var cascadeTotal = 0f
+    /** System animator duration scale captured at cascade start; elapsed divides by it. */
+    private var cascadeScale = 1f
+
     private var focusPage = 0
     private var focusSlot = 1
     private var twistFocused = false
@@ -148,6 +158,8 @@ class HomeView(
     fun setHub(next: Hub) {
         val title = hub.channels.getOrNull(hub.channelOf(focusPage))?.title
         val inPage = focusPage - (hub.channels.getOrNull(hub.channelOf(focusPage))?.firstPage ?: 0)
+        // Landing-page content before the swap, for the entry-cascade decision below.
+        val oldTiles = hub.pages.getOrNull(focusPage)?.tiles?.map { it.label to it.target.toString() }
         // Slot indices mean different cells in another layout, so a relayout refocuses the default.
         val relaid = next.layout != hub.layout
         hub = next
@@ -158,6 +170,15 @@ class HomeView(
         scroll = focusPage * L.w
         scrollStart = -1
         focusAnim.clear()
+        // A fresh hub rebuild counts as a channel entry when the landing page's content
+        // actually changed -- the first build, recents reordering after a launch, a pin
+        // or folder edit, the focused channel itself being swapped. Pure relayouts
+        // (rotation, tile size) and same-content rebuilds (a theme change reloads with
+        // identical tiles) never cascade.
+        if (!relaid) {
+            val newTiles = next.pages.getOrNull(focusPage)?.tiles?.map { it.label to it.target.toString() }
+            if (oldTiles == null || newTiles != oldTiles || next.channels[ch].title != title) startCascade(focusPage)
+        }
         fit()
         invalidate()
     }
@@ -342,6 +363,7 @@ class HomeView(
         var animating = stepScroll(now)
         animating = stepFocus(dt) || animating
         animating = stepChrome(dt) || animating
+        animating = stepCascade(now) || animating
 
         canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), bgPaint)
         val cp = channelPos()
@@ -438,25 +460,34 @@ class HomeView(
         // Settings tiles are controls whose labels carry state ("theme: Midnight"), so
         // the settings channel keeps the classic icon-over-label rendering (drawSmall).
         val labeled = hub.channels[p.channel].title == "settings"
+        // Entry cascade: only the page whose channel just became active animates, and
+        // only while its wave is running; every other page draws at rest.
+        val entryMs = if (page == cascadePage) cascadeElapsed(now) else -1f
+        fun delay(i: Int) = if (entryMs >= 0f) entryDelay(p.template, i) else -1f
         // Draw the focused tile last so its 1.08x growth overlaps its neighbours.
         var focusedLast = -1
         for (i in p.tiles.indices) {
             if (!p.focusable(i)) continue
             if ((focusAnim[key(page, i)] ?: 0f) > 0f) { focusedLast = i; continue }
-            drawTile(canvas, p.tiles[i], p.template.slots[i], x0, y0, key(page, i), now, labeled)
+            drawTile(canvas, p.tiles[i], p.template.slots[i], x0, y0, key(page, i), now, labeled, delay(i), entryMs)
         }
-        if (focusedLast >= 0) drawTile(canvas, p.tiles[focusedLast], p.template.slots[focusedLast], x0, y0, key(page, focusedLast), now, labeled)
+        if (focusedLast >= 0) drawTile(canvas, p.tiles[focusedLast], p.template.slots[focusedLast], x0, y0, key(page, focusedLast), now, labeled, delay(focusedLast), entryMs)
     }
 
-    private fun drawTile(canvas: Canvas, tile: Tile, b: Box, x0: Float, y0: Float, k: Int, now: Long, labeled: Boolean) {
+    private fun drawTile(canvas: Canvas, tile: Tile, b: Box, x0: Float, y0: Float, k: Int, now: Long, labeled: Boolean, entryDelayMs: Float = -1f, entryElapsedMs: Float = 0f) {
         val f = focusAnim[k] ?: 0f
         val pressMs = if (k == pressKey) (now - pressStart).toFloat() else -1f
         val sc = Motion.scale(f, pressMs)
         val x = x0 + b.x
         val y = y0 + b.y
+        // Entry cascade: scale up from Anim.FROM_SCALE and rise into place, composed
+        // into the same centre transform as the focus scale, so the shadow, sheen and
+        // flash drawn below ride along and stay aligned with the tile.
+        val (entryScale, entryRise) =
+            if (entryDelayMs >= 0f) Anim.entryAt(entryElapsedMs, entryDelayMs) else Pair(1f, 0f)
         canvas.save()
-        canvas.translate(x + b.w / 2f, y + b.h / 2f)
-        canvas.scale(sc, sc)
+        canvas.translate(x + b.w / 2f, y + b.h / 2f + entryRise)
+        canvas.scale(sc * entryScale, sc * entryScale)
         canvas.translate(-b.w / 2f, -b.h / 2f)
         rect.set(0f, 0f, b.w, b.h)
 
@@ -768,6 +799,46 @@ class HomeView(
         return moving
     }
 
+    // ---- entry cascade ---------------------------------------------------------------------
+
+    /**
+     * Starts the entry cascade for [page], whose channel just became active. The system
+     * animator duration scale is honoured: at 0 the tiles simply appear, and larger
+     * scales stretch the wave. A restart replaces any running cascade outright, so a
+     * fast second channel switch never shows half-animated state from the previous one.
+     */
+    private fun startCascade(page: Int) {
+        val scale = Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f)
+        if (scale <= 0f || page !in hub.pages.indices) { cascadePage = -1; return }
+        cascadeScale = scale
+        cascadePage = page
+        cascadeStart = SystemClock.uptimeMillis()
+        val p = hub.pages[page]
+        var maxDelay = 0f
+        for (i in p.tiles.indices) if (p.focusable(i)) maxDelay = max(maxDelay, entryDelay(p.template, i))
+        cascadeTotal = Anim.totalMs(maxDelay)
+        invalidate()
+    }
+
+    /** True while the cascade is still running; ends it the moment it settles. */
+    private fun stepCascade(now: Long): Boolean {
+        if (cascadePage < 0) return false
+        if (cascadeElapsed(now) >= cascadeTotal) { cascadePage = -1; return false }
+        return true
+    }
+
+    /** Cascade clock: wall time since the entry, stretched by the system duration scale. */
+    private fun cascadeElapsed(now: Long) = (now - cascadeStart) / cascadeScale
+
+    /** Diagonal-wave delay for [slot] on template [t]: (row + column) steps, hero first. */
+    private fun entryDelay(t: Template, slot: Int): Float {
+        if (slot == t.hero) return 0f
+        val b = t.slots[slot]
+        val row = t.slots.map { it.y }.distinct().count { it < b.y }
+        val col = t.slots.map { it.x }.distinct().count { it < b.x }
+        return Anim.delayFor(row, col)
+    }
+
     private fun animateScrollTo(page: Int) {
         scrollFrom = scroll
         scrollTo = page * L.w
@@ -776,10 +847,15 @@ class HomeView(
     }
 
     private fun goToPage(page: Int, slot: Int) {
+        // The cascade fires only on a genuine channel change: within-channel paging
+        // (a swipe or DPAD step across a channel's own pages) never re-triggers it.
+        val channelChanged = page in hub.pages.indices && focusPage in hub.pages.indices &&
+            hub.channelOf(page) != hub.channelOf(focusPage)
         focusPage = page
         focusSlot = slot
         twistFocused = false
         animateScrollTo(page)
+        if (channelChanged) startCascade(page)
     }
 
     private fun goToChannel(ch: Int, keepTwist: Boolean) {

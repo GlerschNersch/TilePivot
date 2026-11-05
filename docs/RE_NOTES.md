@@ -234,6 +234,35 @@ Four items, one commit each, in order:
 
 - Unit tests: 42 total (HubTest 30, GamesTest 12), all passing.
 
+## App v0.5.1 (2026-11-05): channel-entry tile cascade
+
+Matt asked for the tiles to "do something fun" when a channel page arrives. When a
+channel becomes active, its landing page's tiles now pop in on a diagonal wave from
+the top-left: each tile scales 0.85 -> 1 with a small easeOutBack overshoot (composed
+scale peaks ~1.015) and rises 16 design px into place. No alpha fade -- Metro tiles
+are opaque and stay solid.
+
+- **Math** is pure in `home/Anim.kt`: delay = (row + column) x 28 ms from the tile's
+  grid ranks in its template (the hero always goes first, delay 0), 260 ms per tile,
+  so a page settles in roughly 450-600 ms. `HomeView` composes the entry scale/rise
+  into the same centre transform as the focus scale, so the focus shadow/sheen/flash
+  ride along and stay aligned; input is never gated on the animation.
+- **Triggers** (and only these): a navigation that changes the active channel --
+  pivot swipe across a channel boundary, L1/R1 or keyboard channel step, twist tap,
+  channel shortcut tiles, B returning home -- starting with the horizon scroll, so
+  tiles assemble as the page slides in. Within-channel paging never re-triggers.
+  A fresh hub rebuild counts as an entry only when the landing page's content
+  actually changed (first build, recents reordering after a launch, a pin/folder
+  edit); pure relayouts (rotation, tile-size changes) and same-content rebuilds
+  (theme changes) do not cascade. A new channel switch mid-cascade restarts the
+  wave cleanly on the new channel.
+- **Frame budget**: redraws run only while the wave runs (~600 ms max); nothing
+  invalidates at idle. The system animator duration scale is honoured -- at 0 the
+  tiles simply appear.
+- Unit tests: 47 total (HubTest 35, including the cascade delay/progress/bounds;
+  GamesTest 12), all passing. Emulator evidence (frame sequences of two channel
+  entries) in `~/workspace/x360reborn/shots-phase51/`.
+
 ## Next
 - Hover chrome: first live visual check on hardware with a real pointing device (the
   emulator AVD has none; see the v0.5.0 note above).

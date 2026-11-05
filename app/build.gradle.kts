@@ -11,8 +11,8 @@ android {
         applicationId = "dev.x360reborn"
         minSdk = 33
         targetSdk = 36
-        versionCode = 9
-        versionName = "0.5.0"
+        versionCode = 10
+        versionName = "0.5.1"
     }
 
     // Release signing comes from ~/.gradle/gradle.properties (never the repo): REBORN_KEYSTORE,
