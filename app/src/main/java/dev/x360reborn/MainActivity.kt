@@ -2,6 +2,7 @@ package dev.x360reborn
 
 import android.app.Activity
 import android.app.ActivityOptions
+import android.app.AlertDialog
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.LauncherApps
@@ -11,15 +12,24 @@ import android.os.Handler
 import android.os.Looper
 import android.os.UserHandle
 import android.provider.Settings
+import android.text.Editable
+import android.text.TextWatcher
 import android.util.Log
 import android.view.Gravity
 import android.view.WindowInsets
 import android.view.WindowInsetsController
+import android.view.WindowManager
+import android.widget.ArrayAdapter
+import android.widget.EditText
+import android.widget.LinearLayout
+import android.widget.ListView
 import android.widget.PopupMenu
 import android.widget.Toast
 import android.window.OnBackInvokedDispatcher
+import dev.x360reborn.home.AppInfo
 import dev.x360reborn.home.HomeView
 import dev.x360reborn.home.HubBuilder
+import dev.x360reborn.home.Search
 import dev.x360reborn.home.Target
 import dev.x360reborn.home.Tile
 import dev.x360reborn.home.TileSize
@@ -51,7 +61,7 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         apps = Apps(this)
-        view = HomeView(this, ::launch, ::options, apps::icon, { reload() }, ::tileSizeChosen)
+        view = HomeView(this, ::launch, ::options, apps::icon, { reload() }, ::tileSizeChosen, ::openSearch)
         view.tileSize = apps.tileSize
         setContentView(view)
         window.insetsController?.apply {
@@ -96,11 +106,15 @@ class MainActivity : Activity() {
         super.onDestroy()
     }
 
+    /** The app list from the latest load; the search dialog filters this. */
+    @Volatile private var appList: List<AppInfo> = emptyList()
+
     private fun reload() {
         val layout = view.wanted
         loader.execute {
             val list = apps.load()
-            val hub = HubBuilder.build(list, apps.recent(), apps.pins(), apps.settingsEntries(), layout)
+            appList = list
+            val hub = HubBuilder.build(list, apps.recent(), apps.pins(), apps.settingsEntries(), layout, apps.folders())
             // A rotation may have queued a newer build; only the latest layout wins.
             main.post { if (view.wanted == layout) view.setHub(hub) }
             // Home-page icons first, so the visible tiles fill in before the long lists.
@@ -138,6 +152,8 @@ class MainActivity : Activity() {
             is Target.Action -> if (t.name == Apps.ACTION_TILE_SIZE) {
                 view.tileSize = view.tileSize.next()
                 tileSizeChosen(view.tileSize)
+            } else if (t.name == Apps.ACTION_SEARCH) {
+                openSearch("")
             } else try {
                 startActivity(Intent(t.name).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
                     ActivityOptions.makeCustomAnimation(this, android.R.anim.fade_in, 0).toBundle())
@@ -150,9 +166,77 @@ class MainActivity : Activity() {
         }
     }
 
+    /** Search dialog: a text field over a live-filtered list of apps; tapping one launches it. */
+    private fun openSearch(initial: String) {
+        val input = EditText(this).apply {
+            hint = "Search apps"
+            setSingleLine(true)
+            setText(initial)
+            setSelection(length())
+        }
+        val results = ArrayList<AppInfo>()
+        val adapter = ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, ArrayList())
+        val list = ListView(this).apply { this.adapter = adapter }
+        fun refresh() {
+            results.clear()
+            results.addAll(Search.filter(appList, input.text.toString()))
+            adapter.clear()
+            adapter.addAll(results.map { it.label })
+            adapter.notifyDataSetChanged()
+        }
+        input.addTextChangedListener(object : TextWatcher {
+            override fun afterTextChanged(s: Editable?) = refresh()
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+        })
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(input)
+            addView(list)
+        }
+        val dialog = AlertDialog.Builder(this).setView(box).create()
+        list.setOnItemClickListener { _, _, pos, _ ->
+            val app = results.getOrNull(pos) ?: return@setOnItemClickListener
+            dialog.dismiss()
+            launch(Tile(app.label, Target.App(app.key)), android.graphics.Rect())
+        }
+        refresh()
+        dialog.show()
+        dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE)
+        input.requestFocus()
+    }
+
+    /** Single-line name prompt used for creating and renaming folders. Empty names are ignored. */
+    private fun nameDialog(title: String, prefill: String, onOk: (String) -> Unit) {
+        val input = EditText(this).apply {
+            hint = "Folder name"
+            setSingleLine(true)
+            setText(prefill)
+            setSelection(length())
+        }
+        AlertDialog.Builder(this)
+            .setTitle(title)
+            .setView(input)
+            .setPositiveButton("OK") { _, _ ->
+                val name = input.text.toString().trim()
+                if (name.isNotEmpty()) onOk(name)
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
     private fun options(tile: Tile) {
-        val key = (tile.target as? Target.App)?.key ?: return
+        when {
+            tile.target is Target.App -> appOptions(tile)
+            tile.target is Target.Channel && tile.folderId != null -> folderOptions(tile)
+            else -> return
+        }
+    }
+
+    private fun appOptions(tile: Tile) {
+        val key = (tile.target as Target.App).key
         val pinned = key in apps.pins()
+        val folders = apps.folders()
         val menu = PopupMenu(this, view, Gravity.CENTER)
         menu.menu.add(0, 1, 0, if (pinned) "Unpin from home" else "Pin to home")
         if (key in apps.recent()) menu.menu.add(0, 2, 1, "Remove from recent")
@@ -160,17 +244,59 @@ class MainActivity : Activity() {
         // ACTION_DELETE always targets the personal profile; work apps are removed from App info instead.
         val work = apps.isWork(key)
         if (!work) menu.menu.add(0, 4, 3, "Uninstall")
+        // Inside a folder channel, an app can also be taken back out of that folder.
+        val homeFolder = tile.folderId?.let { id -> folders.firstOrNull { it.id == id } }
+        if (homeFolder != null) menu.menu.add(0, 5, 4, "Remove from ${homeFolder.name}")
+        val addTo = menu.menu.addSubMenu(0, 6, 5, "Add to folder")
+        addTo.add(0, 9, 0, "New folder…")
+        folders.forEachIndexed { i, f -> addTo.add(0, 10 + i, i + 1, f.name) }
         menu.setOnMenuItemClickListener { item ->
             val pkg = key.substringBefore('/')
-            when (item.itemId) {
-                1 -> { apps.togglePin(key); reload() }
-                2 -> { apps.forget(key); reload() }
-                3 -> if (work) {
+            when {
+                item.itemId == 1 -> { apps.togglePin(key); reload() }
+                item.itemId == 2 -> { apps.forget(key); reload() }
+                item.itemId == 3 -> if (work) {
                     launcherApps.startAppDetailsActivity(apps.component(key), apps.user(key), null, null)
                 } else {
                     startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", pkg, null)))
                 }
-                4 -> startActivity(Intent(Intent.ACTION_DELETE, Uri.fromParts("package", pkg, null)))
+                item.itemId == 4 -> startActivity(Intent(Intent.ACTION_DELETE, Uri.fromParts("package", pkg, null)))
+                item.itemId == 5 && homeFolder != null -> { apps.removeFromFolder(homeFolder.id, key); reload() }
+                item.itemId == 9 -> nameDialog("New folder", "") { name ->
+                    apps.createFolder(name, key); reload()
+                }
+                item.itemId >= 10 -> {
+                    val f = folders.getOrNull(item.itemId - 10)
+                    if (f != null) {
+                        if (key in f.members) {
+                            Toast.makeText(this, "Already in ${f.name}", Toast.LENGTH_SHORT).show()
+                        } else {
+                            apps.addToFolder(f.id, key); reload()
+                        }
+                    }
+                }
+            }
+            true
+        }
+        menu.show()
+    }
+
+    private fun folderOptions(tile: Tile) {
+        val id = tile.folderId ?: return
+        val menu = PopupMenu(this, view, Gravity.CENTER)
+        menu.menu.add(0, 1, 0, "Rename folder…")
+        menu.menu.add(0, 2, 1, "Delete folder")
+        menu.setOnMenuItemClickListener { item ->
+            when (item.itemId) {
+                1 -> nameDialog("Rename folder", tile.label) { name ->
+                    apps.renameFolder(id, name); reload()
+                }
+                2 -> AlertDialog.Builder(this)
+                    .setTitle("Delete folder")
+                    .setMessage("“${tile.label}” will be removed. Its apps stay installed and return to the normal lists.")
+                    .setPositiveButton("Delete") { _, _ -> apps.deleteFolder(id); reload() }
+                    .setNegativeButton("Cancel", null)
+                    .show()
             }
             true
         }

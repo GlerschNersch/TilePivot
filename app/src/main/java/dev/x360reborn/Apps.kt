@@ -13,6 +13,7 @@ import android.os.UserManager
 import android.provider.Settings
 import dev.x360reborn.home.AppInfo
 import dev.x360reborn.home.Category
+import dev.x360reborn.home.FolderInfo
 import dev.x360reborn.home.Glyph
 import dev.x360reborn.home.TileSize
 import dev.x360reborn.home.SettingsEntry
@@ -98,6 +99,57 @@ class Apps(private val context: Context) {
 
     fun forget(key: String) = prefs.edit().remove(RECENT + key).apply()
 
+    // ---- folders ---------------------------------------------------------------------------
+    // "folders" holds the folder ids in creation order; each folder keeps its name and its
+    // member app keys (stored order) under "folder:<id>:name" / "folder:<id>:members".
+
+    fun folders(): List<FolderInfo> =
+        prefs.getString(FOLDERS, "")!!.split('\n').filter { it.isNotEmpty() }.map { id ->
+            FolderInfo(
+                id,
+                prefs.getString(FOLDER + id + NAME, "")!!,
+                prefs.getString(FOLDER + id + MEMBERS, "")!!.split('\n').filter { it.isNotEmpty() },
+            )
+        }
+
+    private fun saveFolders(list: List<FolderInfo>) {
+        val e = prefs.edit()
+        e.putString(FOLDERS, list.joinToString("\n") { it.id })
+        // Drop the name/members keys of folders that no longer exist.
+        prefs.all.keys.filter { it.startsWith(FOLDER) }.forEach { k ->
+            val id = k.removePrefix(FOLDER).substringBefore(':')
+            if (list.none { it.id == id }) e.remove(k)
+        }
+        for (f in list) {
+            e.putString(FOLDER + f.id + NAME, f.name)
+            e.putString(FOLDER + f.id + MEMBERS, f.members.joinToString("\n"))
+        }
+        e.apply()
+    }
+
+    fun createFolder(name: String, firstKey: String): FolderInfo {
+        val seq = prefs.getInt(FOLDER_SEQ, 0) + 1
+        prefs.edit().putInt(FOLDER_SEQ, seq).apply()
+        // Millis base36 plus a stored counter: unique even for two folders in the same millisecond.
+        val folder = FolderInfo("f" + System.currentTimeMillis().toString(36) + seq.toString(36), name, listOf(firstKey))
+        saveFolders(folders() + folder)
+        return folder
+    }
+
+    fun addToFolder(id: String, key: String) =
+        saveFolders(folders().map { if (it.id == id && key !in it.members) it.copy(members = it.members + key) else it })
+
+    /** Removing the last member deletes the folder. */
+    fun removeFromFolder(id: String, key: String) =
+        saveFolders(folders().mapNotNull {
+            if (it.id != id) it else it.copy(members = it.members - key).takeIf { f -> f.members.isNotEmpty() }
+        })
+
+    fun renameFolder(id: String, name: String) =
+        saveFolders(folders().map { if (it.id == id) it.copy(name = name) else it })
+
+    fun deleteFolder(id: String) = saveFolders(folders().filter { it.id != id })
+
     var tileSize: TileSize
         get() = TileSize.entries.firstOrNull { it.name == prefs.getString(TILE_SIZE, null) } ?: TileSize.LARGE
         set(v) = prefs.edit().putString(TILE_SIZE, v.name).apply()
@@ -122,8 +174,15 @@ class Apps(private val context: Context) {
     companion object {
         /** Launcher-internal action: cycle the tile size. */
         const val ACTION_TILE_SIZE = "dev.x360reborn.TILE_SIZE"
+        /** Launcher-internal action: open the app search dialog. */
+        const val ACTION_SEARCH = "dev.x360reborn.SEARCH"
         private const val RECENT = "recent:"
         private const val PINS = "pins"
         private const val TILE_SIZE = "tileSize"
+        private const val FOLDERS = "folders"
+        private const val FOLDER = "folder:"
+        private const val NAME = ":name"
+        private const val MEMBERS = ":members"
+        private const val FOLDER_SEQ = "folderSeq"
     }
 }

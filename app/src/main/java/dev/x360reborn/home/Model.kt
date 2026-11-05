@@ -1,9 +1,14 @@
 package dev.x360reborn.home
 
+import dev.x360reborn.Apps
+
 enum class Category { GAME, VIDEO, MUSIC, OTHER }
 
 /** A launchable activity, reduced to what layout needs. [key] is the flattened component. */
 data class AppInfo(val key: String, val label: String, val category: Category = Category.OTHER)
+
+/** A user-created folder: an ordered set of app keys, shown as its own channel. */
+data class FolderInfo(val id: String, val name: String, val members: List<String>)
 
 sealed interface Target {
     data class App(val key: String) : Target
@@ -22,9 +27,11 @@ data class Tile(
     /** App whose icon the tile shows, or null for a drawn glyph. */
     val iconKey: String? = (target as? Target.App)?.key,
     val glyph: Glyph = Glyph.NONE,
+    /** Folder this tile belongs to (a folder's member tile) or opens (a folder tile), else null. */
+    val folderId: String? = null,
 )
 
-enum class Glyph { NONE, ALL_APPS, SETTINGS, TILE_SIZE }
+enum class Glyph { NONE, ALL_APPS, SETTINGS, TILE_SIZE, SEARCH, FOLDER }
 
 /** One template instance on the horizon. Tiles line up with [Template.slots]; extra slots stay empty. */
 data class Page(val channel: Int, val template: Template, val tiles: List<Tile>)
@@ -54,9 +61,14 @@ object HubBuilder {
         pins: List<String>,
         settings: List<SettingsEntry>,
         layout: Layout = Layout.LANDSCAPE,
+        folders: List<FolderInfo> = emptyList(),
     ): Hub {
         val byKey = apps.associateBy { it.key }
         val alpha = apps.sortedBy { it.label.lowercase() }
+        // Folders keep only installed members, in stored order; an all-uninstalled folder vanishes.
+        val liveFolders = folders
+            .map { f -> f.copy(members = f.members.filter { it in byKey }) }
+            .filter { it.members.isNotEmpty() }
 
         val titles = ArrayList<String>()
         val content = ArrayList<List<AppInfo>>()
@@ -82,6 +94,12 @@ object HubBuilder {
         }
         add("apps", alpha)
         val appsIndex = titles.size - 1
+        // Each live folder becomes its own channel, after apps and before settings.
+        val folderByChannel = HashMap<Int, FolderInfo>()
+        for (f in liveFolders) {
+            folderByChannel[titles.size] = f
+            add(f.name, f.members.map { byKey.getValue(it) })
+        }
         add("settings", emptyList())
         val settingsIndex = titles.size - 1
 
@@ -91,11 +109,15 @@ object HubBuilder {
             val start = pages.size
             when (i) {
                 0 -> pages += homePage(layout.home, homeOrder, appsIndex, settingsIndex, heroSub)
-                appsIndex -> pages += gridPages(layout.grid, i, alpha.map(::appTile))
+                appsIndex -> pages += gridPages(layout.grid, i, appsTiles(liveFolders, folderByChannel, alpha))
                 settingsIndex -> pages += gridPages(layout.grid, i, settings.map {
                     Tile(it.label, Target.Action(it.action, it.external), iconKey = it.iconKey,
                         glyph = if (it.iconKey == null) it.glyph else Glyph.NONE)
                 })
+                in folderByChannel -> {
+                    val f = folderByChannel.getValue(i)
+                    pages += gridPages(layout.grid, i, f.members.map { appTile(byKey.getValue(it), f.id) })
+                }
                 else -> pages += contentPages(layout, i, content[i])
             }
             channels += Channel(title, start, pages.size - start)
@@ -103,7 +125,23 @@ object HubBuilder {
         return Hub(channels, pages, layout)
     }
 
-    private fun appTile(a: AppInfo) = Tile(a.label, Target.App(a.key))
+    /** Apps channel: the search tile, one tile per live folder, then every app alphabetically. */
+    private fun appsTiles(liveFolders: List<FolderInfo>, folderByChannel: Map<Int, FolderInfo>, alpha: List<AppInfo>): List<Tile> {
+        val tiles = ArrayList<Tile>()
+        tiles += Tile("search", Target.Action(Apps.ACTION_SEARCH, external = false), glyph = Glyph.SEARCH, iconKey = null)
+        val channelOf = folderByChannel.entries.associate { (index, f) -> f.id to index }
+        for (f in liveFolders) {
+            tiles += Tile(
+                f.name, Target.Channel(channelOf.getValue(f.id)),
+                sub = if (f.members.size == 1) "1 app" else "${f.members.size} apps",
+                glyph = Glyph.FOLDER, iconKey = null, folderId = f.id,
+            )
+        }
+        tiles += alpha.map { appTile(it) }
+        return tiles
+    }
+
+    private fun appTile(a: AppInfo, folderId: String? = null) = Tile(a.label, Target.App(a.key), folderId = folderId)
 
     private fun homePage(t: Template, order: List<AppInfo>, appsIndex: Int, settingsIndex: Int, heroSub: String): Page {
         val tiles = arrayOfNulls<Tile>(t.slots.size)
@@ -130,7 +168,7 @@ object HubBuilder {
         val tiles = arrayOfNulls<Tile>(t.slots.size)
         val used = fillTemplate(t, tiles, apps, "")
         val first = Page(channel, t, tiles.toList().filterNotNullPreservingSlots())
-        return listOf(first) + gridPages(layout.grid, channel, apps.drop(used).map(::appTile), allowEmpty = false)
+        return listOf(first) + gridPages(layout.grid, channel, apps.drop(used).map { appTile(it) }, allowEmpty = false)
     }
 
     /** Hero slot takes the first app, the remaining open slots take the rest in reading order. */

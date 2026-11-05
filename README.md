@@ -23,6 +23,9 @@ install over a build you made yourself with the debug key; uninstall that one fi
 - Phone portrait layout, plus three tile sizes (pinch, or the "tile size" tile in settings)
 - D-pad / gamepad support (L1/R1 switch channels, A launch, B home, X options)
 - Long-press a tile to pin it, remove it from recents, open app info or uninstall
+- App search: the search tile at the head of the apps channel, the Search key, or typing a letter opens a live-filtered app list (starts-with matches first)
+- Folders: long-press an app to start a folder or add it to one; each folder gets its own channel and a tile in apps, and can be renamed or deleted from its tile's long-press menu (apps are never uninstalled)
+- Work-profile apps are listed alongside personal ones with their briefcase badge, and launch and app-info act on the right profile; Android 15 Private Space apps stay hidden
 
 ## Build
 

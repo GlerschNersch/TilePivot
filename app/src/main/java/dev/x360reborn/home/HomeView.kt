@@ -44,6 +44,8 @@ class HomeView(
     private val onLayout: (Layout) -> Unit,
     /** A pinch picked a new tile size (persist it, confirm it). */
     private val onTileSize: (TileSize) -> Unit,
+    /** Search key (or a typed letter/digit) asks for the search dialog, prefilled with the text. */
+    private val onSearch: (String) -> Unit,
 ) : View(context) {
 
     var hub: Hub = HubBuilder.build(emptyList(), emptyList(), emptyList(), emptyList())
@@ -397,6 +399,27 @@ class HomeView(
                     canvas.restore()
                 }
             }
+            Glyph.SEARCH -> {
+                // Magnifier: stroked circle with a handle running down-right.
+                val cx = x + size * 0.42f
+                val cy = y + size * 0.42f
+                val r = size * 0.27f
+                fill.style = Paint.Style.STROKE
+                fill.strokeWidth = size * 0.11f
+                canvas.drawCircle(cx, cy, r, fill)
+                canvas.drawLine(cx + r * 0.72f, cy + r * 0.72f, x + size * 0.9f, y + size * 0.9f, fill)
+                fill.style = Paint.Style.FILL
+            }
+            Glyph.FOLDER -> {
+                // Folder outline: a tabbed back panel, with a solid front panel in front of it.
+                val left = x + size * 0.05f
+                val right = x + size * 0.95f
+                fill.alpha = 110
+                canvas.drawRect(left, y + size * 0.3f, right, y + size * 0.88f, fill)
+                canvas.drawRect(left, y + size * 0.18f, x + size * 0.5f, y + size * 0.32f, fill)
+                fill.alpha = 255
+                canvas.drawRect(left + size * 0.07f, y + size * 0.48f, right - size * 0.07f, y + size * 0.8f, fill)
+            }
             Glyph.TILE_SIZE -> {
                 // Big square shrinking into a 2x2 of small ones.
                 val g = size * 0.08f
@@ -515,7 +538,16 @@ class HomeView(
                 if (!twistFocused) hub.pages[focusPage].tiles.getOrNull(focusSlot)?.let(onLongPress)
             }
             KeyEvent.KEYCODE_BUTTON_B, KeyEvent.KEYCODE_ESCAPE -> back()
-            else -> return super.onKeyDown(keyCode, event)
+            KeyEvent.KEYCODE_SEARCH -> onSearch("")
+            else -> {
+                // Typing a letter or digit on a hardware keyboard opens search with it.
+                val ch = event.unicodeChar
+                if (ch != 0 && ch.toChar().isLetterOrDigit()) {
+                    onSearch(ch.toChar().toString())
+                    return true
+                }
+                return super.onKeyDown(keyCode, event)
+            }
         }
         return true
     }

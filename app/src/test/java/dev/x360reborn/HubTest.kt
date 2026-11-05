@@ -2,6 +2,8 @@ package dev.x360reborn
 
 import dev.x360reborn.home.AppInfo
 import dev.x360reborn.home.Category
+import dev.x360reborn.home.FolderInfo
+import dev.x360reborn.home.Glyph
 import dev.x360reborn.home.HubBuilder
 import dev.x360reborn.home.Kind
 import dev.x360reborn.home.Layout
@@ -9,6 +11,7 @@ import dev.x360reborn.home.TileSize
 import dev.x360reborn.home.Metrics
 import dev.x360reborn.home.Motion
 import dev.x360reborn.home.Nav
+import dev.x360reborn.home.Search
 import dev.x360reborn.home.SettingsEntry
 import dev.x360reborn.home.Target
 import dev.x360reborn.home.focusable
@@ -44,8 +47,70 @@ class HubTest {
     @Test fun appsChannelPagesHoldFifteen() {
         val hub = HubBuilder.build(apps, emptyList(), emptyList(), settings)
         val ch = hub.channels.first { it.title == "apps" }
-        assertEquals(2, ch.pageCount)
+        // 30 apps + the search tile at the head of the channel = 31 tiles, so 3 pages of 15.
+        assertEquals(3, ch.pageCount)
         assertEquals(15, hub.pages[ch.firstPage].tiles.size)
+    }
+
+    @Test fun searchReturnsAllAlphabeticallyForEmptyQuery() {
+        val list = listOf(AppInfo("b/B", "beta"), AppInfo("a/A", "Alpha"), AppInfo("c/C", "camera"))
+        assertEquals(listOf("Alpha", "beta", "camera"), Search.filter(list, "  ").map { it.label })
+    }
+
+    @Test fun searchRanksStartsWithBeforeContains() {
+        val list = listOf(
+            AppInfo("w/W", "Webcam"),
+            AppInfo("c/C", "Camera"),
+            AppInfo("s/S", "Cam Scanner"),
+            AppInfo("m/M", "Maps"),
+        )
+        // Trimmed, case-insensitive; starts-with group first, alphabetical within each group.
+        assertEquals(listOf("Cam Scanner", "Camera", "Webcam"), Search.filter(list, " cam ").map { it.label })
+        assertEquals(emptyList<AppInfo>(), Search.filter(list, "zzz"))
+    }
+
+    private val folders = listOf(
+        FolderInfo("f1", "My Folder", listOf("p2/A", "p1/A")),
+        FolderInfo("f2", "Games Bin", listOf("p3/A")),
+    )
+
+    @Test fun folderChannelsLandAfterAppsAndBeforeSettings() {
+        val hub = HubBuilder.build(apps, emptyList(), emptyList(), settings, folders = folders)
+        assertEquals(listOf("home", "games", "apps", "My Folder", "Games Bin", "settings"), hub.channels.map { it.title })
+    }
+
+    @Test fun appsPageStartsWithSearchThenFolderTiles() {
+        val hub = HubBuilder.build(apps, emptyList(), emptyList(), settings, folders = folders)
+        val ch = hub.channels.first { it.title == "apps" }
+        val tiles = hub.pages[ch.firstPage].tiles
+        assertEquals("search", tiles[0].label)
+        assertEquals(Glyph.SEARCH, tiles[0].glyph)
+        assertEquals(Target.Action(dev.x360reborn.Apps.ACTION_SEARCH, false), tiles[0].target)
+        val folderTile = tiles[1]
+        assertEquals("My Folder", folderTile.label)
+        assertEquals(Glyph.FOLDER, folderTile.glyph)
+        assertEquals("f1", folderTile.folderId)
+        assertEquals("2 apps", folderTile.sub)
+        assertEquals(Target.Channel(hub.channels.indexOfFirst { it.title == "My Folder" }), folderTile.target)
+        assertEquals("1 app", tiles[2].sub)
+        // Then the apps themselves, alphabetically.
+        assertEquals(Target.App("p1/A"), tiles[3].target)
+    }
+
+    @Test fun folderMemberTilesCarryFolderIdInStoredOrder() {
+        val hub = HubBuilder.build(apps, emptyList(), emptyList(), settings, folders = folders)
+        val ch = hub.channels.first { it.title == "My Folder" }
+        val tiles = hub.pages[ch.firstPage].tiles
+        assertEquals(listOf("p2/A", "p1/A"), tiles.map { (it.target as Target.App).key })
+        assertTrue(tiles.all { it.folderId == "f1" })
+    }
+
+    @Test fun folderWithOnlyUninstalledMembersIsDropped() {
+        val ghost = listOf(FolderInfo("f9", "Ghost", listOf("nope/X", "gone/Y")))
+        val hub = HubBuilder.build(apps, emptyList(), emptyList(), settings, folders = ghost)
+        assertEquals(listOf("home", "games", "apps", "settings"), hub.channels.map { it.title })
+        val ch = hub.channels.first { it.title == "apps" }
+        assertTrue(hub.pages[ch.firstPage].tiles.none { it.folderId == "f9" })
     }
 
     @Test fun navigationMovesAcrossTheHeroTile() {
