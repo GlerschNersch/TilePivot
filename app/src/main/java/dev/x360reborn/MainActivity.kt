@@ -15,7 +15,6 @@ import android.provider.Settings
 import android.text.Editable
 import android.text.TextWatcher
 import android.util.Log
-import android.view.Gravity
 import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.view.WindowManager
@@ -23,7 +22,6 @@ import android.widget.ArrayAdapter
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ListView
-import android.widget.PopupMenu
 import android.widget.Toast
 import android.window.OnBackInvokedDispatcher
 import dev.x360reborn.home.AppInfo
@@ -308,70 +306,77 @@ class MainActivity : Activity() {
         val key = (tile.target as Target.App).key
         val pinned = key in apps.pins()
         val folders = apps.folders()
-        val menu = PopupMenu(this, view, Gravity.CENTER)
-        menu.menu.add(0, 1, 0, if (pinned) "Unpin from home" else "Pin to home")
-        if (key in apps.recent()) menu.menu.add(0, 2, 1, "Remove from recent")
-        menu.menu.add(0, 3, 2, "App info")
-        // ACTION_DELETE always targets the personal profile; work apps are removed from App info instead.
         val work = apps.isWork(key)
-        if (!work) menu.menu.add(0, 4, 3, "Uninstall")
+        val pkg = key.substringBefore('/')
+        // The old popup menu rendered zero-height on Matt's phone and the emulator, which made
+        // every long-press action unreachable; these options are an AlertDialog list instead.
+        val labels = ArrayList<String>()
+        val actions = ArrayList<() -> Unit>()
+        labels += if (pinned) "Unpin from home" else "Pin to home"
+        actions += { apps.togglePin(key); reload() }
+        if (key in apps.recent()) {
+            labels += "Remove from recent"
+            actions += { apps.forget(key); reload() }
+        }
+        labels += "App info"
+        actions += {
+            // ACTION_DELETE always targets the personal profile; work apps are managed from App info instead.
+            if (work) {
+                launcherApps.startAppDetailsActivity(apps.component(key), apps.user(key), null, null)
+            } else {
+                startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", pkg, null)))
+            }
+        }
+        if (!work) {
+            labels += "Uninstall"
+            actions += { startActivity(Intent(Intent.ACTION_DELETE, Uri.fromParts("package", pkg, null))) }
+        }
         // Inside a folder channel, an app can also be taken back out of that folder.
         val homeFolder = tile.folderId?.let { id -> folders.firstOrNull { it.id == id } }
-        if (homeFolder != null) menu.menu.add(0, 5, 4, "Remove from ${homeFolder.name}")
-        val addTo = menu.menu.addSubMenu(0, 6, 5, "Add to folder")
-        addTo.add(0, 9, 0, "New folder…")
-        folders.forEachIndexed { i, f -> addTo.add(0, 10 + i, i + 1, f.name) }
-        menu.setOnMenuItemClickListener { item ->
-            val pkg = key.substringBefore('/')
-            when {
-                item.itemId == 1 -> { apps.togglePin(key); reload() }
-                item.itemId == 2 -> { apps.forget(key); reload() }
-                item.itemId == 3 -> if (work) {
-                    launcherApps.startAppDetailsActivity(apps.component(key), apps.user(key), null, null)
+        if (homeFolder != null) {
+            labels += "Remove from ${homeFolder.name}"
+            actions += { apps.removeFromFolder(homeFolder.id, key); reload() }
+        }
+        folders.forEach { f ->
+            labels += "Add to folder: ${f.name}"
+            actions += {
+                if (key in f.members) {
+                    Toast.makeText(this, "Already in ${f.name}", Toast.LENGTH_SHORT).show()
                 } else {
-                    startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", pkg, null)))
-                }
-                item.itemId == 4 -> startActivity(Intent(Intent.ACTION_DELETE, Uri.fromParts("package", pkg, null)))
-                item.itemId == 5 && homeFolder != null -> { apps.removeFromFolder(homeFolder.id, key); reload() }
-                item.itemId == 9 -> nameDialog("New folder", "") { name ->
-                    apps.createFolder(name, key); reload()
-                }
-                item.itemId >= 10 -> {
-                    val f = folders.getOrNull(item.itemId - 10)
-                    if (f != null) {
-                        if (key in f.members) {
-                            Toast.makeText(this, "Already in ${f.name}", Toast.LENGTH_SHORT).show()
-                        } else {
-                            apps.addToFolder(f.id, key); reload()
-                        }
-                    }
+                    apps.addToFolder(f.id, key); reload()
                 }
             }
-            true
         }
-        menu.show()
+        labels += "New folder…"
+        actions += {
+            nameDialog("New folder", "") { name ->
+                apps.createFolder(name, key); reload()
+            }
+        }
+        AlertDialog.Builder(this)
+            .setTitle(tile.label)
+            .setItems(labels.toTypedArray()) { _, which -> actions.getOrNull(which)?.invoke() }
+            .show()
     }
 
     private fun folderOptions(tile: Tile) {
         val id = tile.folderId ?: return
-        val menu = PopupMenu(this, view, Gravity.CENTER)
-        menu.menu.add(0, 1, 0, "Rename folder…")
-        menu.menu.add(0, 2, 1, "Delete folder")
-        menu.setOnMenuItemClickListener { item ->
-            when (item.itemId) {
-                1 -> nameDialog("Rename folder", tile.label) { name ->
-                    apps.renameFolder(id, name); reload()
+        AlertDialog.Builder(this)
+            .setTitle(tile.label)
+            .setItems(arrayOf("Rename folder…", "Delete folder")) { _, which ->
+                when (which) {
+                    0 -> nameDialog("Rename folder", tile.label) { name ->
+                        apps.renameFolder(id, name); reload()
+                    }
+                    1 -> AlertDialog.Builder(this)
+                        .setTitle("Delete folder")
+                        .setMessage("“${tile.label}” will be removed. Its apps stay installed and return to the normal lists.")
+                        .setPositiveButton("Delete") { _, _ -> apps.deleteFolder(id); reload() }
+                        .setNegativeButton("Cancel", null)
+                        .show()
                 }
-                2 -> AlertDialog.Builder(this)
-                    .setTitle("Delete folder")
-                    .setMessage("“${tile.label}” will be removed. Its apps stay installed and return to the normal lists.")
-                    .setPositiveButton("Delete") { _, _ -> apps.deleteFolder(id); reload() }
-                    .setNegativeButton("Cancel", null)
-                    .show()
             }
-            true
-        }
-        menu.show()
+            .show()
     }
 
     private companion object {
