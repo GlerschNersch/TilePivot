@@ -12,10 +12,12 @@ import android.os.UserHandle
 import android.os.UserManager
 import android.provider.Settings
 import dev.x360reborn.home.AppInfo
+import dev.x360reborn.home.BgStyle
 import dev.x360reborn.home.Category
 import dev.x360reborn.home.FolderInfo
 import dev.x360reborn.home.Glyph
 import dev.x360reborn.home.TileSize
+import dev.x360reborn.home.Themes
 import dev.x360reborn.home.SettingsEntry
 import java.util.concurrent.ConcurrentHashMap
 
@@ -154,6 +156,23 @@ class Apps(private val context: Context) {
         get() = TileSize.entries.firstOrNull { it.name == prefs.getString(TILE_SIZE, null) } ?: TileSize.LARGE
         set(v) = prefs.edit().putString(TILE_SIZE, v.name).apply()
 
+    var themeId: String
+        get() = prefs.getString(THEME, null) ?: Themes.default.id
+        set(v) = prefs.edit().putString(THEME, v).apply()
+
+    var bgStyle: BgStyle
+        get() = BgStyle.byName(prefs.getString(BG_STYLE, null))
+        set(v) = prefs.edit().putString(BG_STYLE, v.name).apply()
+
+    var clock24h: Boolean
+        get() = prefs.getBoolean(CLOCK_24H, false)
+        set(v) = prefs.edit().putBoolean(CLOCK_24H, v).apply()
+
+    fun channelHidden(title: String) = prefs.getBoolean(HIDE + title, false)
+
+    fun setChannelHidden(title: String, hidden: Boolean) =
+        prefs.edit().putBoolean(HIDE + title, hidden).apply()
+
     fun settingsEntries(xboxGranted: Boolean = false, xboxCount: Int = 0): List<SettingsEntry> {
         val settingsApp = activities.keys.firstOrNull { it.startsWith("com.android.settings/") }
         return listOf(
@@ -164,7 +183,12 @@ class Apps(private val context: Context) {
             } else {
                 SettingsEntry("xbox 360 games: grant folder access", ACTION_XBOX, glyph = Glyph.GAMEPAD, external = false)
             },
+            SettingsEntry("theme: ${Themes.byId(themeId).name.lowercase()}", ACTION_THEME, glyph = Glyph.THEME, external = false),
             SettingsEntry("tile size: ${tileSize.label}", ACTION_TILE_SIZE, glyph = Glyph.TILE_SIZE, external = false),
+            SettingsEntry("background: ${bgStyle.label}", ACTION_BG, external = false),
+            SettingsEntry("clock: ${if (clock24h) "24-hour" else "12-hour"}", ACTION_CLOCK, external = false),
+            SettingsEntry("tv & movies: ${if (channelHidden("tv & movies")) "hidden" else "shown"}", ACTION_TV, external = false),
+            SettingsEntry("music: ${if (channelHidden("music")) "hidden" else "shown"}", ACTION_MUSIC, external = false),
             SettingsEntry("system settings", Settings.ACTION_SETTINGS, settingsApp),
             SettingsEntry("wi-fi", Settings.ACTION_WIFI_SETTINGS),
             SettingsEntry("bluetooth", Settings.ACTION_BLUETOOTH_SETTINGS),
@@ -185,9 +209,23 @@ class Apps(private val context: Context) {
         const val ACTION_SEARCH = "dev.x360reborn.SEARCH"
         /** Launcher-internal action: grant all-files access for Xbox 360 games, or re-scan. */
         const val ACTION_XBOX = "dev.x360reborn.XBOX"
+        /** Launcher-internal action: open the theme picker. */
+        const val ACTION_THEME = "dev.x360reborn.THEME"
+        /** Launcher-internal action: cycle the background style. */
+        const val ACTION_BG = "dev.x360reborn.BACKGROUND"
+        /** Launcher-internal action: toggle the hub clock between 12-hour and 24-hour. */
+        const val ACTION_CLOCK = "dev.x360reborn.CLOCK"
+        /** Launcher-internal action: show/hide the tv & movies channel. */
+        const val ACTION_TV = "dev.x360reborn.TOGGLE_TV"
+        /** Launcher-internal action: show/hide the music channel. */
+        const val ACTION_MUSIC = "dev.x360reborn.TOGGLE_MUSIC"
         private const val RECENT = "recent:"
         private const val PINS = "pins"
         private const val TILE_SIZE = "tileSize"
+        private const val THEME = "theme"
+        private const val BG_STYLE = "bgStyle"
+        private const val CLOCK_24H = "clock24h"
+        private const val HIDE = "hide:"
         private const val FOLDERS = "folders"
         private const val FOLDER = "folder:"
         private const val NAME = ":name"

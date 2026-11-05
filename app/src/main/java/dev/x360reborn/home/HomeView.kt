@@ -22,8 +22,9 @@ import android.view.ScaleGestureDetector
 import android.view.VelocityTracker
 import android.view.View
 import android.view.ViewConfiguration
-import java.text.DateFormat
+import java.text.SimpleDateFormat
 import java.util.Date
+import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.floor
 import kotlin.math.max
@@ -64,6 +65,41 @@ class HomeView(
             relayout()
         }
 
+    /** Background treatment over the active theme's aura ramp. */
+    var bgStyle = BgStyle.GRADIENT
+        set(v) {
+            if (field == v) return
+            field = v
+            fit()
+            invalidate()
+        }
+
+    /** 24-hour hub clock instead of the dash's 12-hour one. */
+    var clock24h = false
+        set(v) {
+            if (field == v) return
+            field = v
+            invalidate()
+        }
+
+    /** The active theme changed: rebuild the gradients and the cached text colours. */
+    fun onThemeChanged() {
+        fit()
+        invalidate()
+    }
+
+    private fun hubClock(): String =
+        SimpleDateFormat(if (clock24h) "HH:mm" else "h:mm a", Locale.US).format(Date())
+
+    /** Text paints cache their colours, so a theme change has to push the new ones in. */
+    private fun applyColors() {
+        twistText.color = Metrics.TEXT
+        label.color = Metrics.TEXT
+        heroPrimary.color = Metrics.TEXT
+        heroSecondary.color = Metrics.TEXT_DIM
+        clockText.color = Metrics.TEXT
+    }
+
     // Fit transform, design -> screen.
     private var s = 1f
     private var ox = 0f
@@ -100,7 +136,6 @@ class HomeView(
     private val clockText = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { color = Metrics.TEXT; typeface = light; textSize = Metrics.pt(18f); textAlign = Paint.Align.RIGHT }
     private val rect = RectF()
     private val iconRect = RectF()
-    private val clockFormat = DateFormat.getTimeInstance(DateFormat.SHORT)
 
     init {
         isFocusable = true
@@ -158,12 +193,32 @@ class HomeView(
         s = min(w / L.w, h / L.h)
         ox = (w - L.w * s) / 2f
         oy = (h - L.h * s) / 2f
-        bgPaint.shader = LinearGradient(0f, 0f, 0f, h.toFloat(), Metrics.AURA_STOPS, null, Shader.TileMode.CLAMP)
+        bgPaint.shader = LinearGradient(0f, 0f, 0f, h.toFloat(), bgColors(), null, Shader.TileMode.CLAMP)
         val floorColor = Metrics.FLOOR and 0xFFFFFF
         floorPaint.shader = LinearGradient(
             0f, oy, 0f, oy + L.h * s,
             intArrayOf(floorColor, (0x38 shl 24) or floorColor, (0xCB shl 24) or floorColor, Metrics.FLOOR, Metrics.FLOOR),
             floatArrayOf(0f, 300f / 720f, 500f / 720f, 600f / 720f, 1f), Shader.TileMode.CLAMP,
+        )
+        applyColors()
+    }
+
+    /** The background ramp for the current style: full gradient, one flat mid colour, or a darkened ramp. */
+    private fun bgColors(): IntArray {
+        val stops = Metrics.AURA_STOPS
+        return when (bgStyle) {
+            BgStyle.GRADIENT -> stops
+            BgStyle.SOLID -> intArrayOf(stops[2], stops[2])
+            BgStyle.DIMMED -> intArrayOf(dimmed(stops.first()), dimmed(stops.last()))
+        }
+    }
+
+    private fun dimmed(color: Int): Int {
+        val f = 0.55f
+        return Color.rgb(
+            (Color.red(color) * f).roundToInt(),
+            (Color.green(color) * f).roundToInt(),
+            (Color.blue(color) * f).roundToInt(),
         )
     }
 
@@ -208,7 +263,7 @@ class HomeView(
         canvas.scale(s, s)
         val (tScale, tAlpha) = transState(now)
         if (tAlpha <= 0f) {
-            canvas.drawText(clockFormat.format(Date()), L.clockX, L.clockY, clockText)
+            canvas.drawText(hubClock(), L.clockX, L.clockY, clockText)
             canvas.restore()
             if (trans != null) postInvalidateOnAnimation() else lastFrame = 0L
             return
@@ -228,7 +283,7 @@ class HomeView(
         if (pinchScale != 1f) canvas.restore()
         drawTwist(canvas, cp, now)
         if (transforming) canvas.restore()
-        canvas.drawText(clockFormat.format(Date()), L.clockX, L.clockY, clockText)
+        canvas.drawText(hubClock(), L.clockX, L.clockY, clockText)
         canvas.restore()
 
         if (trans != null) animating = true
@@ -463,6 +518,17 @@ class HomeView(
                     val cy = y + r * (half + g)
                     canvas.drawRect(cx + g, cy + g, cx + half - g, cy + half - g, fill)
                 }
+            }
+            Glyph.THEME -> {
+                // Palette disc in the text colour, with the tile colour punched back out as paint dots.
+                val cx = x + size / 2f
+                val cy = y + size / 2f
+                canvas.drawCircle(cx, cy, size * 0.42f, fill)
+                fill.color = Metrics.TILE_GREEN
+                canvas.drawCircle(cx - size * 0.16f, cy + size * 0.02f, size * 0.09f, fill)
+                canvas.drawCircle(cx + size * 0.1f, cy - size * 0.17f, size * 0.09f, fill)
+                canvas.drawCircle(cx + size * 0.17f, cy + size * 0.15f, size * 0.09f, fill)
+                fill.color = Metrics.TEXT
             }
             Glyph.NONE -> {}
         }

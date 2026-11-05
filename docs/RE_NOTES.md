@@ -90,6 +90,39 @@ on resume after a launch. The system splash is blanked (aura-coloured, no icon) 
   to measure. Its `audio` resource is the startup sound (XMA2, 48 kHz): Microsoft's, never shipped.
 - `xam` holds the Guide XUI (`skin`, `xam`, `shrdres`, `gamercrd`…); `huduiskin` is resource-only (no PE header).
 
+## App v0.4.0 (2026-11-04): themes, customization, E2E pass
+- Theme system (`home/Theme.kt`): a Theme carries the tile fill, the five aura stops, the floor
+  colour, text/text-dim and the hero slot fill; the `Metrics` colour properties delegate to
+  `Themes.active`, so every hub drawing path (tiles, hero, glyph cut-outs, twist, clock) follows
+  the theme. Five built-ins: Xbox Green (the measured skin.xui constants above; still the default,
+  look unchanged), Midnight, Crimson, Violet, Carbon. The white sheen/shadow alphas stay fixed
+  (they are light, not colour). Picked from the settings channel's "theme:" tile, which opens a
+  radio-list dialog; the choice applies immediately and persists in prefs (`theme`).
+- More settings tiles, all internal actions, persisted and applied on tap: "background:" cycles
+  the aura presentation (gradient = the measured ramp, solid = the ramp's mid colour flat,
+  dimmed = the ramp darkened to 55%); "clock:" toggles the hub clock between 12-hour (dash style)
+  and 24-hour; "tv & movies:" / "music:" show or hide those two channels in the pivot
+  (`HubBuilder.hiddenChannels`; home, games, apps, folder channels and settings always stay).
+- A palette glyph (white disc, tile-colour dots) marks the theme tile; the other new tiles use
+  the standard gear glyph.
+- Unit tests: 29 total (HubTest 21, including theme registry, BgStyle round-trip and hidden
+  channels; GamesTest 8), all passing.
+- End-to-end pass on the emulator (Medium_Phone_API_36.1) before shipping, baseline flows on
+  0.3.1 and the new features on the 0.4.0 build: cold boot and every channel; search by tile,
+  Search key and typed letter, with a result launch; the full folder flow (create, add, rename,
+  remove member, last-member auto-delete, delete with confirmation); pin, unpin and
+  remove-from-recent; seeded Xbox 360 games (ISO/ZAR/GOD/XEX) with the Xendroid+ not-installed
+  dialog and its link; gamepad D-pad/A/B/X; persistence of pins, folders and every new setting
+  across force-stop; every settings tile's target screen; the tile-size cycle through all three
+  layouts; landscape rotation; long-list paging; and the no-all-files-access empty state (games
+  channel disappears, the settings tile becomes the grant prompt) plus recovery on re-grant.
+  No functional defects found. Cosmetic notes: the settings labels for the xbox entry and for
+  "background: gradient" ellipsize on the portrait large tile (the toast on tap confirms the
+  value); on this heavily-loaded AVD the aura-coloured starting window can sit for several
+  seconds before the first hub frame.
+
 ## Next
-- LZX for flash modules (xam Guide skin, bootanim boot animation).
-- Twist focus glow and channel-switch timing against real footage; Kinect/hover chrome not built.
+- Twist focus glow fine-tuning and channel-switch timing against real footage (the glow and the
+  transitions are implemented from the measured scene timelines, but never compared side-by-side
+  with a real dash); Kinect/hover chrome not built.
+- STFS title parsing, so GOD/XBLA games show their real names instead of content-ID file names.

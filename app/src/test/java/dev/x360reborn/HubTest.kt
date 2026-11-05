@@ -1,6 +1,7 @@
 package dev.x360reborn
 
 import dev.x360reborn.home.AppInfo
+import dev.x360reborn.home.BgStyle
 import dev.x360reborn.home.Category
 import dev.x360reborn.home.FolderInfo
 import dev.x360reborn.home.Glyph
@@ -14,6 +15,7 @@ import dev.x360reborn.home.Nav
 import dev.x360reborn.home.Search
 import dev.x360reborn.home.SettingsEntry
 import dev.x360reborn.home.Target
+import dev.x360reborn.home.Themes
 import dev.x360reborn.home.focusable
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -188,6 +190,44 @@ class HubTest {
         assertEquals(Pair(1.5f, 0f), dev.x360reborn.home.Trans.FROM.at(28 * f))
         assertEquals(Pair(1f, 1f), dev.x360reborn.home.Trans.BACK_TO.at(50 * f))
         assertEquals(750f, dev.x360reborn.home.Trans.TO.totalMs, 0.01f)
+    }
+
+    @Test fun themeRegistryIsUniqueWithXboxDefault() {
+        assertEquals(Themes.all.size, Themes.all.map { it.id }.toSet().size)
+        assertEquals(5, Themes.all.size)
+        assertEquals("xbox", Themes.default.id)
+        // The default theme carries the measured pre-theme constants, so the look is unchanged.
+        assertEquals(0xFF008A00.toInt(), Themes.default.tile)
+        assertEquals(0xFF76777B.toInt(), Themes.default.bgTop)
+        assertEquals(0xFFCDCDCD.toInt(), Themes.default.bgBottom)
+        assertEquals(Themes.default, Themes.byId(null))
+        assertEquals(Themes.default, Themes.byId("no-such-theme"))
+        assertEquals(Themes.MIDNIGHT, Themes.byId("midnight"))
+        assertEquals(Themes.CARBON, Themes.byId("carbon"))
+    }
+
+    @Test fun bgStyleNamesRoundTripAndCycle() {
+        for (style in BgStyle.entries) assertEquals(style, BgStyle.byName(style.name))
+        assertEquals(BgStyle.GRADIENT, BgStyle.byName(null))
+        assertEquals(BgStyle.GRADIENT, BgStyle.byName("bogus"))
+        assertEquals(BgStyle.SOLID, BgStyle.GRADIENT.next())
+        assertEquals(BgStyle.DIMMED, BgStyle.SOLID.next())
+        assertEquals(BgStyle.GRADIENT, BgStyle.DIMMED.next())
+    }
+
+    @Test fun hiddenMediaChannelsAreDropped() {
+        val mixed = listOf(
+            AppInfo("g/G", "Game", Category.GAME),
+            AppInfo("v/V", "Video", Category.VIDEO),
+            AppInfo("m/M", "Music", Category.MUSIC),
+        )
+        val both = HubBuilder.build(mixed, emptyList(), emptyList(), settings, hiddenChannels = setOf("tv & movies", "music"))
+        assertEquals(listOf("home", "games", "apps", "settings"), both.channels.map { it.title })
+        val one = HubBuilder.build(mixed, emptyList(), emptyList(), settings, hiddenChannels = setOf("music"))
+        assertEquals(listOf("home", "games", "tv & movies", "apps", "settings"), one.channels.map { it.title })
+        // Games is not a media channel: hiding it is not offered and has no effect here.
+        val games = HubBuilder.build(mixed, emptyList(), emptyList(), settings, hiddenChannels = setOf("tv & movies"))
+        assertEquals(listOf("home", "games", "music", "apps", "settings"), games.channels.map { it.title })
     }
 
     @Test fun focusCurveMatchesTimeline() {

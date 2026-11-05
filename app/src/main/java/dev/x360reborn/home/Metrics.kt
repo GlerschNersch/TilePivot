@@ -99,15 +99,16 @@ object Metrics {
     const val GRID_COLS = 5
     const val GRID_ROWS = 3
 
-    // skin.xui colours.
-    const val TILE_GREEN = 0xFF008A00.toInt()
-    const val TEXT = 0xFFEBEBEB.toInt()
-    const val TEXT_DIM = 0xFF8C8C8C.toInt()
-    const val SLOT_DARK = 0xFF0F0F0F.toInt()
+    // skin.xui colours, read from the active theme. The Xbox Green theme holds the
+    // original measured constants, so the default look is unchanged.
+    val TILE_GREEN: Int get() = Themes.active.tile
+    val TEXT: Int get() = Themes.active.text
+    val TEXT_DIM: Int get() = Themes.active.textDim
+    val SLOT_DARK: Int get() = Themes.active.slotDark
 
     // aura_background.jpg is a plain vertical ramp; aura_floor.png is #BFBFBF fading in.
-    val AURA_STOPS = intArrayOf(0xFF76777B.toInt(), 0xFF898A8C.toInt(), 0xFFA3A3A5.toInt(), 0xFFBCBCBC.toInt(), 0xFFCDCDCD.toInt())
-    const val FLOOR = 0xFFBFBFBF.toInt()
+    val AURA_STOPS: IntArray get() = Themes.active.auraStops()
+    val FLOOR: Int get() = Themes.active.floor
     const val PAN_SCALE = 1.3f
 
     // HubSlotContainer Focus timeline (frames 19 -> 35 at 60 fps).

@@ -25,6 +25,8 @@ install over a build you made yourself with the debug key; uninstall that one fi
 - Long-press a tile to pin it, remove it from recents, open app info or uninstall
 - App search: the search tile at the head of the apps channel, the Search key, or typing a letter opens a live-filtered app list (starts-with matches first)
 - Folders: long-press an app to start a folder or add it to one; each folder gets its own channel and a tile in apps, and can be renamed or deleted from its tile's long-press menu (apps are never uninstalled)
+- Themes: five built-in colour themes (Xbox Green, Midnight, Crimson, Violet, Carbon) picked from the "theme" tile in settings; Xbox Green is the original measured dashboard look and stays the default
+- More customization in settings: background style (gradient, solid or dimmed), a 12/24-hour hub clock, and show/hide toggles for the tv & movies and music channels
 - Work-profile apps are listed alongside personal ones with their briefcase badge, and launch and app-info act on the right profile; Android 15 Private Space apps stay hidden
 - Xbox 360 games via Xendroid+: your own game dumps (ISO, ZAR, Games on Demand/XBLA containers, or folders containing default.xex) placed in an `Xbox360` folder (`/sdcard/Xbox360`, `/sdcard/ROMs/xbox360`, or `/sdcard/Games/Xbox360`) appear in the games channel and launch straight into the Xendroid+ emulator. Requires Xendroid+ installed, plus all-files access granted from the settings channel ("xbox 360 games: grant folder access")
 

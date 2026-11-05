@@ -29,6 +29,7 @@ import dev.x360reborn.home.HomeView
 import dev.x360reborn.home.HubBuilder
 import dev.x360reborn.home.Search
 import dev.x360reborn.home.Target
+import dev.x360reborn.home.Themes
 import dev.x360reborn.home.Tile
 import dev.x360reborn.home.TileSize
 import dev.x360reborn.home.Trans
@@ -61,8 +62,12 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         apps = Apps(this)
         games = Games(this)
+        // The theme must be active before the view caches its first colours.
+        Themes.active = Themes.byId(apps.themeId)
         view = HomeView(this, ::launch, ::options, apps::icon, { reload() }, ::tileSizeChosen, ::openSearch)
         view.tileSize = apps.tileSize
+        view.bgStyle = apps.bgStyle
+        view.clock24h = apps.clock24h
         setContentView(view)
         window.insetsController?.apply {
             hide(WindowInsets.Type.statusBars())
@@ -119,6 +124,7 @@ class MainActivity : Activity() {
                 list, apps.recent(), apps.pins(),
                 apps.settingsEntries(games.hasAccess(), games.found),
                 layout, apps.folders(), gameList,
+                hiddenChannels = hiddenChannels(),
             )
             // A rotation may have queued a newer build; only the latest layout wins.
             main.post { if (view.wanted == layout) view.setHub(hub) }
@@ -126,6 +132,37 @@ class MainActivity : Activity() {
             val visible = hub.pages[0].tiles.mapNotNull { it.iconKey }
             apps.loadIcons(visible) { main.post { view.invalidate() } }
         }
+    }
+
+    /** Media channels the user hid in settings; everything else always stays in the pivot. */
+    private fun hiddenChannels(): Set<String> = buildSet {
+        if (apps.channelHidden("tv & movies")) add("tv & movies")
+        if (apps.channelHidden("music")) add("music")
+    }
+
+    private fun toggleChannel(title: String) {
+        val hidden = !apps.channelHidden(title)
+        apps.setChannelHidden(title, hidden)
+        Toast.makeText(this, "$title channel ${if (hidden) "hidden" else "shown"}", Toast.LENGTH_SHORT).show()
+        reload()
+    }
+
+    private fun themePicker() {
+        val themes = Themes.all
+        val current = themes.indexOfFirst { it.id == apps.themeId }.coerceAtLeast(0)
+        AlertDialog.Builder(this)
+            .setTitle("Theme")
+            .setSingleChoiceItems(themes.map { it.name }.toTypedArray(), current) { dialog, which ->
+                val theme = themes[which]
+                apps.themeId = theme.id
+                Themes.active = theme
+                view.onThemeChanged()
+                Toast.makeText(this, "Theme: ${theme.name}", Toast.LENGTH_SHORT).show()
+                dialog.dismiss()
+                reload()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     private fun tileSizeChosen(size: TileSize) {
@@ -162,6 +199,22 @@ class MainActivity : Activity() {
                 openSearch("")
             } else if (t.name == Apps.ACTION_XBOX) {
                 xboxAction()
+            } else if (t.name == Apps.ACTION_THEME) {
+                themePicker()
+            } else if (t.name == Apps.ACTION_BG) {
+                apps.bgStyle = apps.bgStyle.next()
+                view.bgStyle = apps.bgStyle
+                Toast.makeText(this, "Background: ${apps.bgStyle.label}", Toast.LENGTH_SHORT).show()
+                reload()
+            } else if (t.name == Apps.ACTION_CLOCK) {
+                apps.clock24h = !apps.clock24h
+                view.clock24h = apps.clock24h
+                Toast.makeText(this, if (apps.clock24h) "Clock: 24-hour" else "Clock: 12-hour", Toast.LENGTH_SHORT).show()
+                reload()
+            } else if (t.name == Apps.ACTION_TV) {
+                toggleChannel("tv & movies")
+            } else if (t.name == Apps.ACTION_MUSIC) {
+                toggleChannel("music")
             } else try {
                 startActivity(Intent(t.name).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
                     ActivityOptions.makeCustomAnimation(this, android.R.anim.fade_in, 0).toBundle())

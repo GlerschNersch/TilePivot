@@ -36,7 +36,7 @@ data class Tile(
     val folderId: String? = null,
 )
 
-enum class Glyph { NONE, ALL_APPS, SETTINGS, TILE_SIZE, SEARCH, FOLDER, GAMEPAD }
+enum class Glyph { NONE, ALL_APPS, SETTINGS, TILE_SIZE, SEARCH, FOLDER, GAMEPAD, THEME }
 
 /** One template instance on the horizon. Tiles line up with [Template.slots]; extra slots stay empty. */
 data class Page(val channel: Int, val template: Template, val tiles: List<Tile>)
@@ -68,6 +68,8 @@ object HubBuilder {
         layout: Layout = Layout.LANDSCAPE,
         folders: List<FolderInfo> = emptyList(),
         games360: List<GameInfo> = emptyList(),
+        /** Media channels the user hid in settings; games/home/apps/settings always stay. */
+        hiddenChannels: Set<String> = emptySet(),
     ): Hub {
         val byKey = apps.associateBy { it.key }
         val alpha = apps.sortedBy { it.label.lowercase() }
@@ -101,6 +103,7 @@ object HubBuilder {
             Tile(it.name, Target.Game(it.path), sub = it.format, glyph = Glyph.GAMEPAD, iconKey = null)
         }
         for ((title, cat) in listOf("games" to Category.GAME, "tv & movies" to Category.VIDEO, "music" to Category.MUSIC)) {
+            if (title in hiddenChannels) continue
             val list = alpha.filter { it.category == cat }.map(::appTile)
             val tiles = if (cat == Category.GAME) list + xboxTiles else list
             // A channel with only Xbox 360 games still appears; other empty hubs are dropped.
