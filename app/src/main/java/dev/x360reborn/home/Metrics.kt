@@ -160,6 +160,29 @@ object Metrics {
 
     /** Height of the hero area above its label block; the hero icon centres in it. */
     fun heroIconAreaH(h: Float, hasSub: Boolean) = h - (if (hasSub) HERO_BLOCK_SUB else HERO_BLOCK)
+
+    /** A window into a source bitmap, in source pixels. */
+    data class CoverSrc(val left: Float, val top: Float, val width: Float, val height: Float) {
+        val right get() = left + width
+        val bottom get() = top + height
+    }
+
+    /**
+     * The centred source window that lets a [srcW]x[srcH] bitmap cover a [dstW]x[dstH]
+     * tile (0.4.3's filled grid tiles): scale by the larger factor and crop the overflow
+     * on the other axis, never stretch. A square icon into the standard 174x130 tile
+     * keeps the middle 74.7% of its height; a same-aspect source is used whole.
+     */
+    fun coverSrc(srcW: Float, srcH: Float, dstW: Float, dstH: Float): CoverSrc {
+        val scale = max(dstW / srcW, dstH / srcH)
+        val w = dstW / scale
+        val h = dstH / scale
+        return CoverSrc((srcW - w) / 2f, (srcH - h) / 2f, w, h)
+    }
+
+    /** Edge of the box a drawn glyph occupies on a filled grid tile: large and centred. */
+    const val GLYPH_FRACTION = 0.85f
+    fun gridGlyphSize(tileW: Float, tileH: Float) = min(tileW, tileH) * GLYPH_FRACTION
 }
 
 data class Template(

@@ -64,7 +64,7 @@ class MainActivity : Activity() {
         games = Games(this)
         // The theme must be active before the view caches its first colours.
         Themes.active = Themes.byId(apps.themeId)
-        view = HomeView(this, ::launch, ::options, apps::icon, { reload() }, ::tileSizeChosen, ::openSearch)
+        view = HomeView(this, ::launch, ::options, apps::icon, apps::badge, { reload() }, ::tileSizeChosen, ::openSearch)
         view.tileSize = apps.tileSize
         view.bgStyle = apps.bgStyle
         view.clock24h = apps.clock24h

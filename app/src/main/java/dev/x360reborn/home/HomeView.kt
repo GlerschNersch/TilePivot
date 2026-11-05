@@ -41,6 +41,8 @@ class HomeView(
     private val onLaunch: (Tile, Rect) -> Unit,
     private val onLongPress: (Tile) -> Unit,
     private val iconFor: (String) -> Bitmap?,
+    /** Work-profile badge art for an app key (a full icon canvas, badge in its corner), or null. */
+    private val badgeFor: (String) -> Bitmap?,
     /** Asked to rebuild the hub when rotation changes the layout. */
     private val onLayout: (Layout) -> Unit,
     /** A pinch picked a new tile size (persist it, confirm it). */
@@ -136,6 +138,7 @@ class HomeView(
     private val clockText = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { color = Metrics.TEXT; typeface = light; textSize = Metrics.pt(18f); textAlign = Paint.Align.RIGHT }
     private val rect = RectF()
     private val iconRect = RectF()
+    private val srcRect = Rect()
 
     init {
         isFocusable = true
@@ -344,17 +347,20 @@ class HomeView(
         val p = hub.pages[page]
         val x0 = pageX(page)
         val y0 = pageY(page)
+        // Settings tiles are controls whose labels carry state ("theme: Midnight"), so
+        // the settings channel keeps the classic icon-over-label rendering (drawSmall).
+        val labeled = hub.channels[p.channel].title == "settings"
         // Draw the focused tile last so its 1.08x growth overlaps its neighbours.
         var focusedLast = -1
         for (i in p.tiles.indices) {
             if (!p.focusable(i)) continue
             if ((focusAnim[key(page, i)] ?: 0f) > 0f) { focusedLast = i; continue }
-            drawTile(canvas, p.tiles[i], p.template.slots[i], x0, y0, key(page, i), now)
+            drawTile(canvas, p.tiles[i], p.template.slots[i], x0, y0, key(page, i), now, labeled)
         }
-        if (focusedLast >= 0) drawTile(canvas, p.tiles[focusedLast], p.template.slots[focusedLast], x0, y0, key(page, focusedLast), now)
+        if (focusedLast >= 0) drawTile(canvas, p.tiles[focusedLast], p.template.slots[focusedLast], x0, y0, key(page, focusedLast), now, labeled)
     }
 
-    private fun drawTile(canvas: Canvas, tile: Tile, b: Box, x0: Float, y0: Float, k: Int, now: Long) {
+    private fun drawTile(canvas: Canvas, tile: Tile, b: Box, x0: Float, y0: Float, k: Int, now: Long, labeled: Boolean) {
         val f = focusAnim[k] ?: 0f
         val pressMs = if (k == pressKey) (now - pressStart).toFloat() else -1f
         val sc = Motion.scale(f, pressMs)
@@ -375,7 +381,7 @@ class HomeView(
 
         when (tile.kind) {
             Kind.HERO -> drawHero(canvas, tile, b)
-            else -> drawSmall(canvas, tile, b)
+            else -> drawSmall(canvas, tile, b, labeled)
         }
 
         if (f > 0f) {
@@ -393,13 +399,25 @@ class HomeView(
         canvas.restore()
     }
 
-    private fun drawSmall(canvas: Canvas, tile: Tile, b: Box) {
+    private fun drawSmall(canvas: Canvas, tile: Tile, b: Box, labeled: Boolean) {
+        // Settings controls and the search tile are text first: their labels carry state
+        // or name the action, so they keep the icon-over-label layout. Every other grid
+        // tile is pure art (0.4.3): the artwork fills the tile and there is no text.
+        if (labeled || tile.glyph == Glyph.SEARCH) drawLabeled(canvas, tile, b) else drawFilled(canvas, tile, b)
+    }
+
+    /** The themed tile surface: flat colour with a soft top highlight (glass stand-in). */
+    private fun drawTileBody(canvas: Canvas, b: Box) {
         fill.color = Metrics.TILE_GREEN
         canvas.drawRect(rect, fill)
-        // Glass texture stand-in: soft top highlight over the green.
         fill.shader = LinearGradient(0f, 0f, 0f, b.h, 0x22FFFFFF, 0x00FFFFFF, Shader.TileMode.CLAMP)
         canvas.drawRect(rect, fill)
         fill.shader = null
+    }
+
+    /** The pre-0.4.3 grid tile: themed tile, centred icon, label (and sub) underneath. */
+    private fun drawLabeled(canvas: Canvas, tile: Tile, b: Box) {
+        drawTileBody(canvas, b)
 
         val icon = Metrics.gridIconSize(b.w, b.h, tile.sub.isNotEmpty())
         val ix = (b.w - icon) / 2f
@@ -419,12 +437,52 @@ class HomeView(
         }
     }
 
+    /**
+     * A grid tile as pure art (0.4.3): the app's icon covers the whole tile (centre-crop,
+     * never stretched) and no label or sub is drawn. Glyph tiles (360 games, folders, the
+     * home shortcuts) keep their drawn glyph, large and centred on the themed tile.
+     */
+    private fun drawFilled(canvas: Canvas, tile: Tile, b: Box) {
+        val key = tile.iconKey
+        val bmp = key?.let(iconFor)
+        if (bmp == null) {
+            drawTileBody(canvas, b)
+            val size = Metrics.gridGlyphSize(b.w, b.h)
+            drawIcon(canvas, tile, (b.w - size) / 2f, (b.h - size) / 2f, size)
+            return
+        }
+        // Themed underlay: a legacy icon with transparent margins still sits on the tile colour.
+        fill.color = Metrics.TILE_GREEN
+        canvas.drawRect(rect, fill)
+        val src = Metrics.coverSrc(bmp.width.toFloat(), bmp.height.toFloat(), b.w, b.h)
+        srcRect.set(src.left.roundToInt(), src.top.roundToInt(), src.right.roundToInt(), src.bottom.roundToInt())
+        iconRect.set(0f, 0f, b.w, b.h)
+        canvas.drawBitmap(bmp, srcRect, iconRect, bmpPaint)
+        // The badge is separate art (it would be sliced by the cover crop), overlaid at the corner.
+        if (key != null) drawBadge(canvas, key, b.w, b.h, min(b.w, b.h) * BADGE_SIDE, BADGE_INSET)
+    }
+
+    /**
+     * Overlays the work-profile badge with its canvas corner at ([right], [bottom]),
+     * inset by [inset]. The badge bitmap is a full icon canvas with the badge drawn in
+     * its own bottom-right corner, so a square of [side] keeps its designed placement.
+     */
+    private fun drawBadge(canvas: Canvas, key: String, right: Float, bottom: Float, side: Float, inset: Float) {
+        val badge = badgeFor(key) ?: return
+        iconRect.set(right - side - inset, bottom - side - inset, right - inset, bottom - inset)
+        canvas.drawBitmap(badge, null, iconRect, bmpPaint)
+    }
+
     private fun drawHero(canvas: Canvas, tile: Tile, b: Box) {
         fill.color = Metrics.SLOT_DARK
         canvas.drawRect(rect, fill)
         val icon = Metrics.heroIconSize(b.w, b.h, tile.sub.isNotEmpty())
         val areaH = Metrics.heroIconAreaH(b.h, tile.sub.isNotEmpty())
-        drawIcon(canvas, tile, (b.w - icon) / 2f, (areaH - icon) / 2f, icon)
+        val ix = (b.w - icon) / 2f
+        val iy = (areaH - icon) / 2f
+        drawIcon(canvas, tile, ix, iy, icon)
+        // The hero's badge sits where the baked-in one used to: the icon's bottom-right corner.
+        tile.iconKey?.let { drawBadge(canvas, it, ix + icon, iy + icon, icon * BADGE_SIDE, 0f) }
         // mobyslot: gradient from 170/320 of the height, primary 17 pt, secondary 16 pt.
         fill.shader = LinearGradient(0f, b.h * 170f / 320f, 0f, b.h, 0x00000000, 0xC0000000.toInt(), Shader.TileMode.CLAMP)
         canvas.drawRect(0f, b.h * 170f / 320f, b.w, b.h, fill)
@@ -709,6 +767,10 @@ class HomeView(
     private companion object {
         /** The app opens 12 frames into the 28-frame TransFrom, while the hub is still zooming. */
         const val LAUNCH_INTO_FROM_MS = 200L
+        /** Badge canvas edge, as a fraction of the icon edge (hero) or the tile's short side (grid). */
+        const val BADGE_SIDE = 0.92f
+        /** Gap between a filled tile's corner and its badge canvas. */
+        const val BADGE_INSET = 3f
     }
 
     private val slop = ViewConfiguration.get(context).scaledTouchSlop

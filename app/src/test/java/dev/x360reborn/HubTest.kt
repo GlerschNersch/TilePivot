@@ -241,6 +241,45 @@ class HubTest {
         assertEquals(58f, Metrics.gridIconSize(100f, 130f, hasSub = false), 0f)
     }
 
+    @Test fun coverSrcCropsSquareIconToTile() {
+        // Square 288px icon into the standard 174x130 tile: full width is kept, and the
+        // middle 215 of 288 rows (74.7% of the height) -- the rest is centre-cropped.
+        val c = Metrics.coverSrc(288f, 288f, 174f, 130f)
+        assertEquals(0f, c.left, 0.01f)
+        assertEquals(288f, c.width, 0.01f)
+        assertEquals(215.17f, c.height, 0.01f)
+        assertEquals(36.41f, c.top, 0.01f)
+        assertEquals(288f, c.right, 0.01f)
+        assertEquals(251.59f, c.bottom, 0.01f)
+    }
+
+    @Test fun coverSrcCropsTallAndWideSources() {
+        // Tall source: full width kept, height cropped symmetrically.
+        val tall = Metrics.coverSrc(200f, 400f, 174f, 130f)
+        assertEquals(0f, tall.left, 0.01f)
+        assertEquals(200f, tall.width, 0.01f)
+        assertEquals(149.43f, tall.height, 0.01f)
+        assertEquals(125.29f, tall.top, 0.01f)
+        // Wide source: full height kept, width cropped symmetrically.
+        val wide = Metrics.coverSrc(400f, 200f, 174f, 130f)
+        assertEquals(0f, wide.top, 0.01f)
+        assertEquals(200f, wide.height, 0.01f)
+        assertEquals(267.69f, wide.width, 0.01f)
+        assertEquals(66.15f, wide.left, 0.01f)
+        // Same aspect as the tile: the whole source is used, nothing cropped.
+        val same = Metrics.coverSrc(348f, 260f, 174f, 130f)
+        assertEquals(0f, same.left, 0.01f)
+        assertEquals(0f, same.top, 0.01f)
+        assertEquals(348f, same.width, 0.01f)
+        assertEquals(260f, same.height, 0.01f)
+    }
+
+    @Test fun gridGlyphsDrawLargeOnFilledTiles() {
+        // 85% of the short side, regardless of how wide the tile is.
+        assertEquals(110.5f, Metrics.gridGlyphSize(174f, 130f), 0.01f)
+        assertEquals(110.5f, Metrics.gridGlyphSize(231f, 130f), 0.01f)
+    }
+
     @Test fun heroIconsGrowButKeepTheLabelClear() {
         // Matt's phone portrait hero (708x264, with a sub): 121 before, 194 after.
         assertEquals(194f, Metrics.heroIconSize(708f, 264f, hasSub = true), 0f)

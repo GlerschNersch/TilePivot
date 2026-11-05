@@ -166,6 +166,32 @@ on resume after a launch. The system splash is blanked (aura-coloured, no icon) 
   gamepad glyphs) unchanged.
 - Unit tests: 31 total (HubTest 23, GamesTest 8), all passing.
 
+## App v0.4.3 (2026-11-05): filled grid tiles, no grid text
+
+- Matt's call: grid tile artwork fills the whole tile and the app-name text goes.
+  `HomeView.drawSmall` now dispatches: settings-channel tiles and the search tile
+  keep the classic layout (`drawLabeled` — their labels carry state or name the
+  action); everything else goes through `drawFilled`.
+- `drawFilled` draws the app's icon over the entire tile rect with cover semantics —
+  `Metrics.coverSrc` computes the centred source window (scale to cover, crop the
+  overflow, never stretch; a square icon into 174x130 keeps the middle 74.7% of its
+  height). No label and no sub are drawn: app names, folder counts and 360-game
+  format subs are all gone from grid tiles (the model still carries them; the hero,
+  search dialog and long-press menus still use them). Glyph tiles — 360 games,
+  folders, the home "all apps"/"settings" shortcuts — keep their drawn glyph on the
+  themed tile, now large and centred (`Metrics.gridGlyphSize`, 85% of the short
+  side). The hero is unchanged, name and sub included.
+- The work-profile badge is no longer baked into the icon in `Apps.render` (the
+  cover crop would slice it). `Apps` renders it separately on a transparent canvas
+  (`renderBadge` / `Apps.badge`) and `HomeView.drawBadge` overlays it at the filled
+  tile's bottom-right corner, and at the hero icon's corner as before. The emulator
+  has no work profile, so the badge path is code-verified only, as in 0.4.0.
+- Icon raster raised in `Apps.iconPx` (density x 160, clamped 288..448, from
+  density x 96 / 192..288): a filled LARGE portrait tile is ~450 device px on the
+  emulator and ~530 on Matt's phone. The 448 cap bounds the cache at ~0.8 MB/icon.
+- Unit tests: 34 total (HubTest 26, including coverSrc square/tall/wide/same-aspect
+  and the filled-tile glyph size; GamesTest 8), all passing.
+
 ## Next
 - Twist focus glow fine-tuning and channel-switch timing against real footage (the glow and the
   transitions are implemented from the measured scene timelines, but never compared side-by-side

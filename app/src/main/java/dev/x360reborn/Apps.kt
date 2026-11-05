@@ -31,6 +31,8 @@ class Apps(private val context: Context) {
     private val users = context.getSystemService(UserManager::class.java)
     private val prefs = context.getSharedPreferences("hub", Context.MODE_PRIVATE)
     private val icons = ConcurrentHashMap<String, Bitmap>()
+    /** Work-profile badge art per key, kept apart from the icons (see renderBadge). */
+    private val badges = ConcurrentHashMap<String, Bitmap>()
     @Volatile private var activities: Map<String, LauncherActivityInfo> = emptyMap()
 
     fun load(): List<AppInfo> {
@@ -41,20 +43,28 @@ class Apps(private val context: Context) {
                 .map { key(it, me) to it }
         }.toMap()
         icons.keys.retainAll(activities.keys)
+        badges.keys.retainAll(activities.keys)
         return activities.map { (key, info) -> AppInfo(key, info.label.toString(), category(info.applicationInfo)) }
     }
 
+    /**
+     * Icon raster edge in pixels. 0.4.3 fills whole grid tiles with the icon (and the
+     * hero keeps its 0.4.1 size), so rasterise at density x 160: a filled LARGE portrait
+     * tile is ~450 device px on the emulator and ~530 on Matt's phone. The 448 cap
+     * bounds the all-apps cache at 448 x 448 x 4 ≈ 0.8 MB per icon.
+     */
+    private fun iconPx() = (context.resources.displayMetrics.density * 160).toInt().coerceIn(288, 448)
+
     /** Renders missing icons, [first] keys before the rest; calls [progress] every few icons. */
     fun loadIcons(first: List<String>, progress: () -> Unit) {
-        // 0.4.1 draws icons much larger (the hero especially), so rasterise above the old
-        // 64dp grid size to keep them sharp; capped so the all-apps cache stays reasonable.
-        val iconPx = (context.resources.displayMetrics.density * 96).toInt().coerceIn(192, 288)
+        val iconPx = iconPx()
         val order = LinkedHashSet(first).apply { addAll(activities.keys) }
         var n = 0
         for (key in order) {
             val info = activities[key] ?: continue
             if (icons.containsKey(key)) continue
             icons[key] = render(info, iconPx)
+            if (info.user != Process.myUserHandle()) badges[key] = renderBadge(info, iconPx)
             if (++n % 8 == 0) progress()
         }
         progress()
@@ -88,14 +98,32 @@ class Apps(private val context: Context) {
         }
         val art = Bitmap.createBitmap(px, px, Bitmap.Config.ARGB_8888)
         drawFullSquare(raw, Canvas(art), px)
-        // Work apps get the system's briefcase badge, so they can be told apart from
-        // personal copies; badging a BitmapDrawable of the finished art keeps the badge
-        // without re-introducing the mask.
-        val badged = pm.getUserBadgedIcon(BitmapDrawable(context.resources, art), info.user)
+        // The work-profile badge is NOT baked in (it was up to 0.4.2): grid tiles now
+        // centre-crop the art to fill, which would slice a baked badge. It is rendered
+        // separately (renderBadge) and HomeView overlays it at the tile's corner.
+        return art
+    }
+
+    /**
+     * The work-profile badge for [info] on its own transparent canvas, positioned exactly
+     * where the system would draw it on the icon (its bottom-right corner), so HomeView
+     * can overlay it on the hero icon or on a filled grid tile.
+     */
+    private fun renderBadge(info: LauncherActivityInfo, px: Int): Bitmap {
+        val empty = Bitmap.createBitmap(px, px, Bitmap.Config.ARGB_8888)
+        val badged = context.packageManager.getUserBadgedIcon(BitmapDrawable(context.resources, empty), info.user)
         val out = Bitmap.createBitmap(px, px, Bitmap.Config.ARGB_8888)
         badged.setBounds(0, 0, px, px)
         badged.draw(Canvas(out))
         return out
+    }
+
+    /** Work-profile badge art for [key], or null for personal apps. */
+    fun badge(key: String): Bitmap? {
+        if (!isWork(key)) return null
+        badges[key]?.let { return it }
+        val info = activities[key] ?: return null
+        return renderBadge(info, iconPx()).also { badges[key] = it }
     }
 
     /** Draws [d] as the full square its designer made, with no system icon-shape mask. */
