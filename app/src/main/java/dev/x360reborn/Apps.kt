@@ -5,8 +5,12 @@ import android.content.Context
 import android.content.pm.ApplicationInfo
 import android.content.pm.LauncherActivityInfo
 import android.content.pm.LauncherApps
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.drawable.AdaptiveIconDrawable
+import android.graphics.drawable.BitmapDrawable
+import android.graphics.drawable.Drawable
 import android.os.Process
 import android.os.UserHandle
 import android.os.UserManager
@@ -70,12 +74,43 @@ class Apps(private val context: Context) {
     }
 
     private fun render(info: LauncherActivityInfo, px: Int): Bitmap {
-        // Work apps get the system's briefcase badge, so they can be told apart from personal copies.
-        val d = context.packageManager.getUserBadgedIcon(info.getIcon(0), info.user)
-        val bmp = Bitmap.createBitmap(px, px, Bitmap.Config.ARGB_8888)
-        d.setBounds(0, 0, px, px)
-        d.draw(Canvas(bmp))
-        return bmp
+        // Load the raw icon through PackageManager, NOT LauncherActivityInfo.getIcon(),
+        // then draw its art full-square (see drawFullSquare): the source swap alone is
+        // not enough, because an AdaptiveIconDrawable clips ITSELF to the system icon
+        // shape (a circle on Matt's phone) when drawn, whichever API handed it over.
+        val pm = context.packageManager
+        val raw = try {
+            pm.getApplicationIcon(info.applicationInfo)
+        } catch (e: PackageManager.NameNotFoundException) {
+            // Package not visible to this user (e.g. installed only in the work profile):
+            // fall back to the LauncherApps icon (unwrapped the same way below).
+            info.getIcon(0)
+        }
+        val art = Bitmap.createBitmap(px, px, Bitmap.Config.ARGB_8888)
+        drawFullSquare(raw, Canvas(art), px)
+        // Work apps get the system's briefcase badge, so they can be told apart from
+        // personal copies; badging a BitmapDrawable of the finished art keeps the badge
+        // without re-introducing the mask.
+        val badged = pm.getUserBadgedIcon(BitmapDrawable(context.resources, art), info.user)
+        val out = Bitmap.createBitmap(px, px, Bitmap.Config.ARGB_8888)
+        badged.setBounds(0, 0, px, px)
+        badged.draw(Canvas(out))
+        return out
+    }
+
+    /** Draws [d] as the full square its designer made, with no system icon-shape mask. */
+    private fun drawFullSquare(d: Drawable, canvas: Canvas, px: Int) {
+        if (d is AdaptiveIconDrawable) {
+            // AdaptiveIconDrawable.draw() clips both layers to the system mask path;
+            // drawing the background/foreground layers directly skips the mask and
+            // reproduces the designed full-bleed square (layers are drawn at the same
+            // full viewport bounds the adaptive drawable itself would use).
+            d.background?.let { it.setBounds(0, 0, px, px); it.draw(canvas) }
+            d.foreground?.let { it.setBounds(0, 0, px, px); it.draw(canvas) }
+        } else {
+            d.setBounds(0, 0, px, px)
+            d.draw(canvas)
+        }
     }
 
     fun icon(key: String): Bitmap? = icons[key]

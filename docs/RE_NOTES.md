@@ -142,6 +142,30 @@ on resume after a launch. The system splash is blanked (aura-coloured, no icon) 
 - Unit tests: 31 total (HubTest 23, including grid/hero icon sizing; GamesTest 8), all
   passing.
 
+## App v0.4.2 (2026-11-05): full square icons
+
+- Matt's call: drop the OS circle mask so tiles show each app's full square icon art,
+  like the real dash's square box art. The circles turned out to be applied twice over:
+  `LauncherActivityInfo.getIcon()` hands back the system-shaped icon, and an
+  `AdaptiveIconDrawable` clips ITSELF to the system mask path when drawn — so swapping
+  the source API alone (tried first) changed nothing on screen.
+- `Apps.render` now loads the raw drawable via `PackageManager.getApplicationIcon`
+  (LauncherApps icon as fallback for packages visible only to another profile) and
+  draws it with `drawFullSquare`: for adaptive icons the background/foreground layers
+  are drawn directly at full bounds, skipping the mask; legacy drawables draw as-is.
+  The work-profile badge is applied afterwards to a BitmapDrawable of the finished
+  art, so badged work icons keep their briefcase without re-introducing the mask.
+  Raster size and the 0.4.1 `Metrics` sizing are unchanged; the icon cache is
+  in-memory per process, so nothing persistent needed invalidating.
+- Verified on the emulator against the 0.4.1 build at identical states (home, games,
+  apps at medium tiles): BatHome and Apex Horizon render as full squares; C64U Reborn's
+  art is full-bleed; Orbital's own art sits on its designed black square; Chrome keeps
+  its round glyph, now on its white adaptive background square instead of a white
+  circle. Google's apps show their white background layer in the corners — that is
+  the designed full square, previously hidden by the mask. Games channel (drawn
+  gamepad glyphs) unchanged.
+- Unit tests: 31 total (HubTest 23, GamesTest 8), all passing.
+
 ## Next
 - Twist focus glow fine-tuning and channel-switch timing against real footage (the glow and the
   transitions are implemented from the measured scene timelines, but never compared side-by-side
