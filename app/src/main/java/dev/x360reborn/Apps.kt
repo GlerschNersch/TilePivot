@@ -8,6 +8,8 @@ import android.content.pm.LauncherApps
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.os.Process
+import android.os.UserHandle
+import android.os.UserManager
 import android.provider.Settings
 import dev.x360reborn.home.AppInfo
 import dev.x360reborn.home.Category
@@ -19,14 +21,18 @@ import java.util.concurrent.ConcurrentHashMap
 /** Installed apps, their icons, and the launcher's own recents/pins (kept in prefs, no usage-stats permission). */
 class Apps(private val context: Context) {
     private val launcherApps = context.getSystemService(LauncherApps::class.java)
+    private val users = context.getSystemService(UserManager::class.java)
     private val prefs = context.getSharedPreferences("hub", Context.MODE_PRIVATE)
     private val icons = ConcurrentHashMap<String, Bitmap>()
     @Volatile private var activities: Map<String, LauncherActivityInfo> = emptyMap()
 
     fun load(): List<AppInfo> {
-        val list = launcherApps.getActivityList(null, Process.myUserHandle())
-            .filter { it.componentName.packageName != context.packageName }
-        activities = list.associateBy { it.componentName.flattenToShortString() }
+        val me = Process.myUserHandle()
+        activities = launcherApps.listedProfiles.flatMap { user ->
+            launcherApps.getActivityList(null, user)
+                .filter { it.componentName.packageName != context.packageName }
+                .map { key(it, me) to it }
+        }.toMap()
         icons.keys.retainAll(activities.keys)
         return activities.map { (key, info) -> AppInfo(key, info.label.toString(), category(info.applicationInfo)) }
     }
@@ -45,6 +51,12 @@ class Apps(private val context: Context) {
         progress()
     }
 
+    /** Personal apps keep the bare component key (so saved pins/recents survive); work apps add the profile serial. */
+    private fun key(info: LauncherActivityInfo, me: UserHandle): String {
+        val cn = info.componentName.flattenToShortString()
+        return if (info.user == me) cn else "$cn#${users.getSerialNumberForUser(info.user)}"
+    }
+
     private fun category(ai: ApplicationInfo) = when {
         ai.category == ApplicationInfo.CATEGORY_GAME || ai.flags and ApplicationInfo.FLAG_IS_GAME != 0 -> Category.GAME
         ai.category == ApplicationInfo.CATEGORY_VIDEO -> Category.VIDEO
@@ -53,7 +65,8 @@ class Apps(private val context: Context) {
     }
 
     private fun render(info: LauncherActivityInfo, px: Int): Bitmap {
-        val d = info.getIcon(0)
+        // Work apps get the system's briefcase badge, so they can be told apart from personal copies.
+        val d = context.packageManager.getUserBadgedIcon(info.getIcon(0), info.user)
         val bmp = Bitmap.createBitmap(px, px, Bitmap.Config.ARGB_8888)
         d.setBounds(0, 0, px, px)
         d.draw(Canvas(bmp))
@@ -63,6 +76,10 @@ class Apps(private val context: Context) {
     fun icon(key: String): Bitmap? = icons[key]
 
     fun component(key: String): ComponentName? = activities[key]?.componentName
+
+    fun user(key: String): UserHandle? = activities[key]?.user
+
+    fun isWork(key: String): Boolean = activities[key]?.let { it.user != Process.myUserHandle() } == true
 
     fun recent(): List<String> = prefs.all.entries
         .filter { it.key.startsWith(RECENT) }

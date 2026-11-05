@@ -9,7 +9,6 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.os.Process
 import android.os.UserHandle
 import android.provider.Settings
 import android.util.Log
@@ -121,10 +120,11 @@ class MainActivity : Activity() {
         when (val t = tile.target) {
             is Target.App -> {
                 val cn = apps.component(t.key) ?: return
+                val user = apps.user(t.key) ?: return
                 try {
                     // The hub is already zooming away (TransFrom), so the app just fades in over it.
                     val opts = ActivityOptions.makeCustomAnimation(this, android.R.anim.fade_in, 0)
-                    launcherApps.startMainActivity(cn, Process.myUserHandle(), bounds, opts.toBundle())
+                    launcherApps.startMainActivity(cn, user, bounds, opts.toBundle())
                     leftForApp = true
                     apps.markLaunched(t.key)
                     // Rebuild after the app is up, so "recent" reorders while the hub is hidden.
@@ -157,13 +157,19 @@ class MainActivity : Activity() {
         menu.menu.add(0, 1, 0, if (pinned) "Unpin from home" else "Pin to home")
         if (key in apps.recent()) menu.menu.add(0, 2, 1, "Remove from recent")
         menu.menu.add(0, 3, 2, "App info")
-        menu.menu.add(0, 4, 3, "Uninstall")
+        // ACTION_DELETE always targets the personal profile; work apps are removed from App info instead.
+        val work = apps.isWork(key)
+        if (!work) menu.menu.add(0, 4, 3, "Uninstall")
         menu.setOnMenuItemClickListener { item ->
             val pkg = key.substringBefore('/')
             when (item.itemId) {
                 1 -> { apps.togglePin(key); reload() }
                 2 -> { apps.forget(key); reload() }
-                3 -> startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", pkg, null)))
+                3 -> if (work) {
+                    launcherApps.startAppDetailsActivity(apps.component(key), apps.user(key), null, null)
+                } else {
+                    startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", pkg, null)))
+                }
                 4 -> startActivity(Intent(Intent.ACTION_DELETE, Uri.fromParts("package", pkg, null)))
             }
             true
