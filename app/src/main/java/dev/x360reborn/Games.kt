@@ -68,9 +68,59 @@ object GameScanner {
                 }
             }
             // STFS containers (Games on Demand, XBLA) carry their type in the first 4 bytes.
+            // Their real title is in the header metadata; the file name is a content ID.
             file.length() >= 4 && hasStfsMagic(file) ->
-                add(GameInfo(file.absolutePath, cleanName(file.nameWithoutExtension), "GOD"))
+                add(GameInfo(file.absolutePath, stfsTitle(file) ?: cleanName(file.nameWithoutExtension), "GOD"))
         }
+    }
+
+    /**
+     * The display title from an STFS package's XContent header, or null when unreadable.
+     *
+     * Layout (validated against real 17559 system packages, e.g. the DashPack shows
+     * "DashPack"): after the volume descriptor, the header holds nine per-language
+     * metadata blocks of 0x200 bytes starting at 0x411; each block opens with the
+     * display name, 0x80 bytes of UTF-16BE, NUL-terminated. Slot 0 is English; the
+     * first non-blank slot wins. Any failure (short file, control bytes in the field)
+     * yields null and the caller falls back to the file name, as before this parsing.
+     */
+    fun stfsTitle(file: File): String? = runCatching {
+        val wanted = TITLE_OFFSET + LANG_STRIDE * LANG_SLOTS
+        val head = ByteArray(wanted)
+        val read = file.inputStream().use { input ->
+            var n = 0
+            while (n < wanted) {
+                val r = input.read(head, n, wanted - n)
+                if (r < 0) break
+                n += r
+            }
+            n
+        }
+        // The caller matched the magic already; re-check so a swapped file can't slip by.
+        if (read < 4) return@runCatching null
+        if (STFS_MAGIC.none { m -> (0 until 4).all { head[it] == m[it].code.toByte() } }) return@runCatching null
+        for (slot in 0 until LANG_SLOTS) {
+            val off = TITLE_OFFSET + slot * LANG_STRIDE
+            if (off + 2 > read) break
+            val title = readTitleSlot(head, read, off)
+            if (title != null) return@runCatching title
+        }
+        null
+    }.getOrNull()
+
+    /** One language slot's name field: UTF-16BE until NUL or the 0x80-byte field edge. */
+    private fun readTitleSlot(head: ByteArray, read: Int, off: Int): String? {
+        val sb = StringBuilder()
+        var i = off
+        val end = minOf(off + TITLE_FIELD_BYTES, read - 1)
+        while (i < end) {
+            val unit = ((head[i].toInt() and 0xFF) shl 8) or (head[i + 1].toInt() and 0xFF)
+            if (unit == 0) break
+            if (unit < 0x20) return null // control bytes: not a real title
+            sb.append(unit.toChar())
+            i += 2
+        }
+        return sb.toString().trim().takeIf { it.isNotEmpty() }
     }
 
     private fun hasStfsMagic(file: File): Boolean = runCatching {
@@ -80,6 +130,12 @@ object GameScanner {
     }.getOrDefault(false)
 
     private const val MAX_DEPTH = 2
+
+    // XContent header display-name layout (see stfsTitle).
+    private const val TITLE_OFFSET = 0x411
+    private const val TITLE_FIELD_BYTES = 0x80
+    private const val LANG_SLOTS = 9
+    private const val LANG_STRIDE = 0x200
 }
 
 /** Android-facing store: gates the scan on all-files access and remembers the last count. */

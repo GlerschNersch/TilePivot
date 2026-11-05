@@ -64,6 +64,54 @@ class GamesTest {
         assertTrue(games.all { it.format == "GOD" })
     }
 
+    /** Synthetic STFS header: [magic] at 0, the display title UTF-16BE at 0x411. */
+    private fun stfsHeader(title: String?, totalBytes: Int = 0x2000, magic: String = "LIVE"): ByteArray {
+        val b = ByteArray(totalBytes)
+        magic.toByteArray().copyInto(b)
+        if (title != null && totalBytes > 0x411) {
+            val units = title.toByteArray(Charsets.UTF_16BE)
+            units.copyInto(b, 0x411, 0, minOf(units.size, totalBytes - 0x411))
+        }
+        return b
+    }
+
+    @Test fun godShowsStfsTitleNotHexFilename() {
+        val root = tmp.newFolder("Xbox360")
+        file(root, "58410A3F", stfsHeader("Velocity Racer"))
+        val games = GameScanner.scan(listOf(root))
+        assertEquals(listOf("Velocity Racer"), games.map { it.name })
+        assertEquals("GOD", games[0].format)
+    }
+
+    @Test fun godFallsBackToFilenameWhenTitleBlankOrTruncated() {
+        val root = tmp.newFolder("Xbox360")
+        file(root, "Blank Title Game", stfsHeader(null))
+        // The header ends before the title field starts: same fallback.
+        file(root, "58410B22", stfsHeader("Ignored", totalBytes = 0x200))
+        val games = GameScanner.scan(listOf(root))
+        assertEquals(listOf("58410B22", "Blank Title Game"), games.map { it.name })
+    }
+
+    @Test fun godUsesLaterLanguageSlotWhenEnglishBlank() {
+        val root = tmp.newFolder("Xbox360")
+        val hdr = stfsHeader(null)
+        "Titre Jeu".toByteArray(Charsets.UTF_16BE).copyInto(hdr, 0x411 + 3 * 0x200)
+        file(root, "58410C77", hdr)
+        assertEquals("Titre Jeu", GameScanner.scan(listOf(root))[0].name)
+    }
+
+    @Test fun stfsTitleReachesGameTilesAndHero() {
+        val root = tmp.newFolder("Xbox360")
+        file(root, "58410A3F", stfsHeader("Velocity Racer"))
+        val games = GameScanner.scan(listOf(root))
+        val hub = HubBuilder.build(emptyList(), emptyList(), emptyList(), settings, games360 = games)
+        val ch = hub.channels.first { it.title == "games" }
+        val page = hub.pages[ch.firstPage]
+        val hero = page.tiles[page.template.hero]
+        assertEquals("Velocity Racer", hero.label)
+        assertEquals(Target.Game(games[0].path), hero.target)
+    }
+
     @Test fun skipsJunkHiddenTinyAndTooDeep() {
         val root = tmp.newFolder("Xbox360")
         file(root, "tiny.iso", ByteArray(100))
