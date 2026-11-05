@@ -2,12 +2,20 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
+    <!-- All-files access: the Xbox 360 games scan reads the shared Xbox360 folders. -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
 
     <!-- Package visibility (Android 11+): every launchable app. -->
     <queries>
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+        <!-- Xendroid+ (Xbox 360 emulator): release builds install as .fork. -->
+        <package android:name="xendroid.compose" />
+        <package android:name="xendroid.compose.fork" />
+        <intent>
+            <action android:name="xendroid.intent.action.xendroid" />
         </intent>
     </queries>
 

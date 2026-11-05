@@ -348,10 +348,19 @@ class HomeView(
 
         val icon = 56f
         val ix = (b.w - icon) / 2f
-        val iy = (b.h - 34f - icon) / 2f + 4f
+        // Tiles with a sub (folder sizes, game formats) give the text block a second line.
+        val iy = (b.h - (if (tile.sub.isEmpty()) 34f else 50f) - icon) / 2f + 4f
         drawIcon(canvas, tile, ix, iy, icon)
         val text = TextUtils.ellipsize(tile.label, label, b.w - 20f, TextUtils.TruncateAt.END)
-        canvas.drawText(text, 0, text.length, 10f, b.h - 12f, label)
+        if (tile.sub.isEmpty()) {
+            canvas.drawText(text, 0, text.length, 10f, b.h - 12f, label)
+        } else {
+            canvas.drawText(text, 0, text.length, 10f, b.h - 28f, label)
+            label.color = Metrics.TEXT_DIM
+            val sub = TextUtils.ellipsize(tile.sub, label, b.w - 20f, TextUtils.TruncateAt.END)
+            canvas.drawText(sub, 0, sub.length, 10f, b.h - 10f, label)
+            label.color = Metrics.TEXT
+        }
     }
 
     private fun drawHero(canvas: Canvas, tile: Tile, b: Box) {
@@ -419,6 +428,27 @@ class HomeView(
                 canvas.drawRect(left, y + size * 0.18f, x + size * 0.5f, y + size * 0.32f, fill)
                 fill.alpha = 255
                 canvas.drawRect(left + size * 0.07f, y + size * 0.48f, right - size * 0.07f, y + size * 0.8f, fill)
+            }
+            Glyph.GAMEPAD -> {
+                // Controller: a light rounded body on the tile, with the d-pad and buttons
+                // punched back out in the tile's own green (dark slots keep them readable too).
+                val w = size * 0.94f
+                val h = size * 0.6f
+                val left = x + (size - w) / 2f
+                val top = y + (size - h) / 2f
+                canvas.drawRoundRect(left, top, left + w, top + h, h * 0.5f, h * 0.5f, fill)
+                fill.color = Metrics.TILE_GREEN
+                val cx = left + w * 0.27f
+                val cy = top + h / 2f
+                val arm = size * 0.075f
+                val len = size * 0.12f
+                canvas.drawRect(cx - len, cy - arm, cx + len, cy + arm, fill)
+                canvas.drawRect(cx - arm, cy - len, cx + arm, cy + len, fill)
+                val r = size * 0.06f
+                canvas.drawCircle(left + w * 0.7f, cy - size * 0.09f, r, fill)
+                canvas.drawCircle(left + w * 0.85f, cy + size * 0.03f, r, fill)
+                canvas.drawCircle(left + w * 0.78f, cy + size * 0.13f, r * 0.8f, fill)
+                fill.color = Metrics.TEXT
             }
             Glyph.TILE_SIZE -> {
                 // Big square shrinking into a 2x2 of small ones.

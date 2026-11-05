@@ -39,6 +39,7 @@ import java.util.concurrent.Executors
 class MainActivity : Activity() {
     private lateinit var view: HomeView
     private lateinit var apps: Apps
+    private lateinit var games: Games
     private val loader = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
     private val launcherApps by lazy { getSystemService(LauncherApps::class.java) }
@@ -61,6 +62,7 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         apps = Apps(this)
+        games = Games(this)
         view = HomeView(this, ::launch, ::options, apps::icon, { reload() }, ::tileSizeChosen, ::openSearch)
         view.tileSize = apps.tileSize
         setContentView(view)
@@ -114,7 +116,12 @@ class MainActivity : Activity() {
         loader.execute {
             val list = apps.load()
             appList = list
-            val hub = HubBuilder.build(list, apps.recent(), apps.pins(), apps.settingsEntries(), layout, apps.folders())
+            val gameList = games.load()
+            val hub = HubBuilder.build(
+                list, apps.recent(), apps.pins(),
+                apps.settingsEntries(games.hasAccess(), games.found),
+                layout, apps.folders(), gameList,
+            )
             // A rotation may have queued a newer build; only the latest layout wins.
             main.post { if (view.wanted == layout) view.setHub(hub) }
             // Home-page icons first, so the visible tiles fill in before the long lists.
@@ -149,11 +156,14 @@ class MainActivity : Activity() {
                     Toast.makeText(this, "Can't open ${tile.label}", Toast.LENGTH_SHORT).show()
                 }
             }
+            is Target.Game -> launchGame(tile, t.path)
             is Target.Action -> if (t.name == Apps.ACTION_TILE_SIZE) {
                 view.tileSize = view.tileSize.next()
                 tileSizeChosen(view.tileSize)
             } else if (t.name == Apps.ACTION_SEARCH) {
                 openSearch("")
+            } else if (t.name == Apps.ACTION_XBOX) {
+                xboxAction()
             } else try {
                 startActivity(Intent(t.name).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
                     ActivityOptions.makeCustomAnimation(this, android.R.anim.fade_in, 0).toBundle())
@@ -164,6 +174,65 @@ class MainActivity : Activity() {
             }
             is Target.Channel -> {}
         }
+    }
+
+    /**
+     * Hands an Xbox 360 game to Xendroid+ using its own launch contract: the custom action,
+     * the emulator's package, and game_uri / game_name extras only (no launch_args/launch_token —
+     * those gate Xendroid+'s own per-launch options and a frontend must not send them).
+     * game_uri is the game's absolute path; for folder games it is the default.xex path.
+     */
+    private fun launchGame(tile: Tile, path: String) {
+        val pkg = XENDROID_PACKAGES.firstOrNull { p ->
+            runCatching { packageManager.resolveActivity(Intent(ACTION_XENDROID).setPackage(p), 0) != null }
+                .getOrDefault(false)
+        }
+        if (pkg == null) {
+            // The hub already played its leave transition; bring it back before the dialog.
+            view.play(Trans.TO)
+            AlertDialog.Builder(this)
+                .setTitle("Xendroid+ is not installed")
+                .setMessage("Xbox 360 games need the Xendroid+ emulator. Install it, then this game will open in it.")
+                .setPositiveButton("Get Xendroid+") { _, _ ->
+                    try {
+                        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(XENDROID_RELEASES)))
+                    } catch (e: ActivityNotFoundException) {
+                        Toast.makeText(this, "No browser available", Toast.LENGTH_SHORT).show()
+                    }
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+            return
+        }
+        try {
+            val intent = Intent(ACTION_XENDROID).setPackage(pkg)
+                .putExtra("game_uri", path)
+                .putExtra("game_name", tile.label)
+            startActivity(intent, ActivityOptions.makeCustomAnimation(this, android.R.anim.fade_in, 0).toBundle())
+            leftForApp = true
+        } catch (e: Exception) {
+            Log.w(TAG, "xendroid launch failed: $path", e)
+            view.play(Trans.TO)
+            Toast.makeText(this, "Can't open ${tile.label}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /** Settings-channel Xbox entry: grant all-files access when missing, otherwise re-scan. */
+    private fun xboxAction() {
+        if (games.hasAccess()) {
+            reload()
+            Toast.makeText(this, "${games.found} Xbox 360 games found", Toast.LENGTH_SHORT).show()
+            return
+        }
+        try {
+            startActivity(Intent(
+                Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                Uri.fromParts("package", packageName, null),
+            ))
+        } catch (e: ActivityNotFoundException) {
+            startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+        }
+        leftForApp = true
     }
 
     /** Search dialog: a text field over a live-filtered list of apps; tapping one launches it. */
@@ -226,6 +295,8 @@ class MainActivity : Activity() {
     }
 
     private fun options(tile: Tile) {
+        // Game files aren't ours to manage, so game tiles have no long-press menu.
+        if (tile.target is Target.Game) return
         when {
             tile.target is Target.App -> appOptions(tile)
             tile.target is Target.Channel && tile.folderId != null -> folderOptions(tile)
@@ -305,5 +376,10 @@ class MainActivity : Activity() {
 
     private companion object {
         const val TAG = "X360Reborn"
+        /** Xendroid+'s emulator launch action (EmulatorHostActivity). */
+        const val ACTION_XENDROID = "xendroid.intent.action.xendroid"
+        /** Release builds install as .fork; the plain package is the suffix-overridden build. */
+        val XENDROID_PACKAGES = listOf("xendroid.compose.fork", "xendroid.compose")
+        const val XENDROID_RELEASES = "https://github.com/phforner0/Xendroid-Plus/releases"
     }
 }

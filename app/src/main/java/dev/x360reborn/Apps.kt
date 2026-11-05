@@ -154,9 +154,16 @@ class Apps(private val context: Context) {
         get() = TileSize.entries.firstOrNull { it.name == prefs.getString(TILE_SIZE, null) } ?: TileSize.LARGE
         set(v) = prefs.edit().putString(TILE_SIZE, v.name).apply()
 
-    fun settingsEntries(): List<SettingsEntry> {
+    fun settingsEntries(xboxGranted: Boolean = false, xboxCount: Int = 0): List<SettingsEntry> {
         val settingsApp = activities.keys.firstOrNull { it.startsWith("com.android.settings/") }
         return listOf(
+            // Xbox 360 games live on shared storage: without all-files access the entry is the
+            // grant prompt; with it, the entry reports the scan and re-scans when tapped.
+            if (xboxGranted) {
+                SettingsEntry("xbox 360 games: $xboxCount found", ACTION_XBOX, glyph = Glyph.GAMEPAD, external = false)
+            } else {
+                SettingsEntry("xbox 360 games: grant folder access", ACTION_XBOX, glyph = Glyph.GAMEPAD, external = false)
+            },
             SettingsEntry("tile size: ${tileSize.label}", ACTION_TILE_SIZE, glyph = Glyph.TILE_SIZE, external = false),
             SettingsEntry("system settings", Settings.ACTION_SETTINGS, settingsApp),
             SettingsEntry("wi-fi", Settings.ACTION_WIFI_SETTINGS),
@@ -176,6 +183,8 @@ class Apps(private val context: Context) {
         const val ACTION_TILE_SIZE = "dev.x360reborn.TILE_SIZE"
         /** Launcher-internal action: open the app search dialog. */
         const val ACTION_SEARCH = "dev.x360reborn.SEARCH"
+        /** Launcher-internal action: grant all-files access for Xbox 360 games, or re-scan. */
+        const val ACTION_XBOX = "dev.x360reborn.XBOX"
         private const val RECENT = "recent:"
         private const val PINS = "pins"
         private const val TILE_SIZE = "tileSize"

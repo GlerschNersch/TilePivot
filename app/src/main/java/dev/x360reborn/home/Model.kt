@@ -10,11 +10,16 @@ data class AppInfo(val key: String, val label: String, val category: Category = 
 /** A user-created folder: an ordered set of app keys, shown as its own channel. */
 data class FolderInfo(val id: String, val name: String, val members: List<String>)
 
+/** An Xbox 360 game file on shared storage, launched through the Xendroid+ emulator. */
+data class GameInfo(val path: String, val name: String, val format: String)
+
 sealed interface Target {
     data class App(val key: String) : Target
     /** [external] actions open another activity (and play the leave transition); internal ones don't. */
     data class Action(val name: String, val external: Boolean = true) : Target
     data class Channel(val index: Int) : Target
+    /** An Xbox 360 game; [path] is the game_uri handed to Xendroid+ (the default.xex path for folder games). */
+    data class Game(val path: String) : Target
 }
 
 enum class Kind { TILE, HERO, WIDE }
@@ -31,7 +36,7 @@ data class Tile(
     val folderId: String? = null,
 )
 
-enum class Glyph { NONE, ALL_APPS, SETTINGS, TILE_SIZE, SEARCH, FOLDER }
+enum class Glyph { NONE, ALL_APPS, SETTINGS, TILE_SIZE, SEARCH, FOLDER, GAMEPAD }
 
 /** One template instance on the horizon. Tiles line up with [Template.slots]; extra slots stay empty. */
 data class Page(val channel: Int, val template: Template, val tiles: List<Tile>)
@@ -53,7 +58,7 @@ data class SettingsEntry(
 object HubBuilder {
     /**
      * Mirrors dashhome-offline.xml: home, then the content hubs, then apps and settings.
-     * Content hubs with no apps are dropped, as the dash hides channels it has no content for.
+     * Content hubs with nothing in them are dropped, as the dash hides channels it has no content for.
      */
     fun build(
         apps: List<AppInfo>,
@@ -62,6 +67,7 @@ object HubBuilder {
         settings: List<SettingsEntry>,
         layout: Layout = Layout.LANDSCAPE,
         folders: List<FolderInfo> = emptyList(),
+        games360: List<GameInfo> = emptyList(),
     ): Hub {
         val byKey = apps.associateBy { it.key }
         val alpha = apps.sortedBy { it.label.lowercase() }
@@ -71,8 +77,10 @@ object HubBuilder {
             .filter { it.members.isNotEmpty() }
 
         val titles = ArrayList<String>()
-        val content = ArrayList<List<AppInfo>>()
-        fun add(title: String, list: List<AppInfo>) { titles += title; content += list }
+        // Channel content as ready-made tiles; home, apps, folder and settings pages are built
+        // by their own branches below and keep an empty entry here.
+        val content = ArrayList<List<Tile>>()
+        fun add(title: String, tiles: List<Tile>) { titles += title; content += tiles }
 
         val homeOrder = LinkedHashSet<String>().apply {
             pins.filter { it in byKey }.forEach(::add)
@@ -87,18 +95,24 @@ object HubBuilder {
             heroKey in recent -> "recent"
             else -> ""
         }
-        add("home", homeOrder)
-        for ((title, cat) in listOf("games" to Category.GAME, "tv & movies" to Category.VIDEO, "music" to Category.MUSIC)) {
-            val list = alpha.filter { it.category == cat }
-            if (list.isNotEmpty()) add(title, list)
+        add("home", emptyList())
+        // Xbox 360 games ride in the games channel, after the Android game apps.
+        val xboxTiles = games360.sortedBy { it.name.lowercase() }.map {
+            Tile(it.name, Target.Game(it.path), sub = it.format, glyph = Glyph.GAMEPAD, iconKey = null)
         }
-        add("apps", alpha)
+        for ((title, cat) in listOf("games" to Category.GAME, "tv & movies" to Category.VIDEO, "music" to Category.MUSIC)) {
+            val list = alpha.filter { it.category == cat }.map(::appTile)
+            val tiles = if (cat == Category.GAME) list + xboxTiles else list
+            // A channel with only Xbox 360 games still appears; other empty hubs are dropped.
+            if (tiles.isNotEmpty()) add(title, tiles)
+        }
+        add("apps", emptyList())
         val appsIndex = titles.size - 1
         // Each live folder becomes its own channel, after apps and before settings.
         val folderByChannel = HashMap<Int, FolderInfo>()
         for (f in liveFolders) {
             folderByChannel[titles.size] = f
-            add(f.name, f.members.map { byKey.getValue(it) })
+            add(f.name, emptyList())
         }
         add("settings", emptyList())
         val settingsIndex = titles.size - 1
@@ -163,12 +177,26 @@ object HubBuilder {
         return Page(0, t, tiles.toList().filterNotNullPreservingSlots())
     }
 
-    private fun contentPages(layout: Layout, channel: Int, apps: List<AppInfo>): List<Page> {
+    private fun contentPages(layout: Layout, channel: Int, tiles: List<Tile>): List<Page> {
         val t = layout.home
-        val tiles = arrayOfNulls<Tile>(t.slots.size)
-        val used = fillTemplate(t, tiles, apps, "")
-        val first = Page(channel, t, tiles.toList().filterNotNullPreservingSlots())
-        return listOf(first) + gridPages(layout.grid, channel, apps.drop(used).map { appTile(it) }, allowEmpty = false)
+        val first = arrayOfNulls<Tile>(t.slots.size)
+        val used = fillTiles(t, first, tiles)
+        val page = Page(channel, t, first.toList().filterNotNullPreservingSlots())
+        return listOf(page) + gridPages(layout.grid, channel, tiles.drop(used), allowEmpty = false)
+    }
+
+    /** Hero slot takes the first tile (promoted to HERO), the open slots take the rest in reading order. */
+    private fun fillTiles(t: Template, tiles: Array<Tile?>, items: List<Tile>): Int {
+        var n = 0
+        if (items.isNotEmpty() && t.hero >= 0) {
+            tiles[t.hero] = items[n++].copy(kind = Kind.HERO)
+        }
+        val open = readingOrder(t).filter { tiles[it] == null }
+        for (slot in open) {
+            if (n >= items.size) break
+            tiles[slot] = items[n++]
+        }
+        return n
     }
 
     /** Hero slot takes the first app, the remaining open slots take the rest in reading order. */
