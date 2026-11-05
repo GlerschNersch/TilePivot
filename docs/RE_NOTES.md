@@ -192,8 +192,50 @@ on resume after a launch. The system splash is blanked (aura-coloured, no icon) 
 - Unit tests: 34 total (HubTest 26, including coverSrc square/tall/wide/same-aspect
   and the filled-tile glyph size; GamesTest 8), all passing.
 
+## App v0.5.0 (2026-11-05): backlog burn-down
+
+Four items, one commit each, in order:
+
+- **Readable settings labels.** The "xbox 360 games: N found" tile ellipsized at every tile
+  size (found by the 0.4.3 verification suite). `HomeView.drawLabeled` now shrink-to-fits
+  label text (`Metrics.labelScale`, floored at 0.62x) and wraps at the ": " state colon
+  (`Metrics.splitLabel`) when even the floor cannot fit: "xbox 360 games:" / "grant folder
+  access" renders on two lines at full size. Verified on the emulator at small, medium and
+  large, and for the wrapped no-access state.
+- **STFS title parsing.** `GameScanner.stfsTitle` reads the display name from the STFS
+  header: UTF-16BE at 0x411, nine language slots of 0x200 bytes stride (name field 0x80),
+  first non-blank slot wins. Layout validated against four real PIRS packages from the
+  17559 system update (names at slot 0; publisher lands exactly at 0x411 + 9x0x200 =
+  0x1611). Any failure (bad magic, truncated header, blank/control-char title) falls back
+  to the cleaned file name, so hex content-ID files show their real titles while odd
+  files behave exactly as before. The parsed name is `GameInfo.name`, so it flows to the
+  tile model, the hero, and the Xendroid+ `game_name` extra unchanged. Emulator proof: a
+  synthetic LIVE package named `58410A3F` shows as "Apex Velocity" in the games hero.
+- **Kinect/hover chrome.** Interpretation, since the notes scope only the geometry: the
+  three 60x60 hover targets at back (55,27), home (610,27), search (1165,27) are pointer
+  chrome, like the dash's Kinect buttons. `HomeView` draws them (theme colours, glass
+  face, the hot one lit) only while a mouse or stylus hovers the hub (`onHoverEvent`,
+  150 ms fade in `stepChrome`); clicks there call the same back / home-channel / search
+  paths. Touch and gamepad never see them, so the verified focus/press/twist behaviour
+  is untouched. Portrait keeps the row at 48 px along the top (`Metrics.hoverChromeBoxes`).
+  Verification limit: the test AVD has no pointing device at all (getevent shows only
+  multitouch + keyboards; injected mouse events never become a cursor, sendevent is
+  permission-denied, adbd cannot root on this production image), so the visible hover
+  state is unit- and code-verified only; first live check needs pointer hardware.
+- **Animation timing vs real footage.** Measured from a 720p60 capture of a real 17559
+  dash ("Xbox 360 Dashboard Update 2025", youtube yEJQg8ygrdQ; 480p30 dash tour
+  EAJfPNBprBw as cross-check) with a frame-diff motion curve. Channel switch, three
+  clean samples: ~417 ms, ~417 ms, ~467 ms (mean ~434 ms) against the app's 450 ms
+  horizon scroll - about 4% off, inside the 15% band, and the velocity profile (peak
+  within ~4 frames, smooth decay) matches the implemented ease-out cubic. No isolated
+  hub focus step occurs in either capture, so the focus twist (16 frames from the
+  HubSlotContainer timeline) is neither confirmed nor refuted by footage and stays as
+  measured from the XUR. No animation constants changed.
+
+- Unit tests: 42 total (HubTest 30, GamesTest 12), all passing.
+
 ## Next
-- Twist focus glow fine-tuning and channel-switch timing against real footage (the glow and the
-  transitions are implemented from the measured scene timelines, but never compared side-by-side
-  with a real dash); Kinect/hover chrome not built.
-- STFS title parsing, so GOD/XBLA games show their real names instead of content-ID file names.
+- Hover chrome: first live visual check on hardware with a real pointing device (the
+  emulator AVD has none; see the v0.5.0 note above).
+- Work-profile badge overlay still awaits a glance on a device with a work profile
+  (carried from 0.4.3).
