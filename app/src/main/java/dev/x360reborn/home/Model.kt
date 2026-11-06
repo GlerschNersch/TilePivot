@@ -36,7 +36,7 @@ data class Tile(
     val folderId: String? = null,
 )
 
-enum class Glyph { NONE, ALL_APPS, SETTINGS, TILE_SIZE, SEARCH, FOLDER, GAMEPAD, THEME }
+enum class Glyph { NONE, ALL_APPS, SETTINGS, TILE_SIZE, SEARCH, FOLDER, GAMEPAD, THEME, BACKUP, RESTORE }
 
 /** One template instance on the horizon. Tiles line up with [Template.slots]; extra slots stay empty. */
 data class Page(val channel: Int, val template: Template, val tiles: List<Tile>)

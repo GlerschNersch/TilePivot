@@ -329,6 +329,25 @@ class Apps(
         get() = prefs.getBoolean(CLOCK_24H, false)
         set(v) = prefs.edit().putBoolean(CLOCK_24H, v).apply()
 
+    /** Every launcher setting as a [Backup] document. */
+    fun exportSettings(): String = Backup.encode(prefs.all)
+
+    /**
+     * Replaces every launcher setting with [values] (from [Backup.decode]). Written with
+     * commit(), not apply(): the activity is recreated right after and must read them back.
+     */
+    fun importSettings(values: Map<String, Any>): Boolean {
+        val e = prefs.edit().clear()
+        for ((k, v) in values) when (v) {
+            is String -> e.putString(k, v)
+            is Boolean -> e.putBoolean(k, v)
+            is Int -> e.putInt(k, v)
+            is Long -> e.putLong(k, v)
+            is Float -> e.putFloat(k, v)
+        }
+        return e.commit()
+    }
+
     fun channelHidden(title: String) = prefs.getBoolean(HIDE + title, false)
 
     fun setChannelHidden(title: String, hidden: Boolean) =
@@ -350,6 +369,8 @@ class Apps(
             SettingsEntry("clock: ${if (clock24h) "24-hour" else "12-hour"}", ACTION_CLOCK, external = false),
             SettingsEntry("tv & movies: ${if (channelHidden("tv & movies")) "hidden" else "shown"}", ACTION_TV, external = false),
             SettingsEntry("music: ${if (channelHidden("music")) "hidden" else "shown"}", ACTION_MUSIC, external = false),
+            SettingsEntry("back up settings", ACTION_BACKUP, glyph = Glyph.BACKUP, external = false),
+            SettingsEntry("restore settings", ACTION_RESTORE, glyph = Glyph.RESTORE, external = false),
             SettingsEntry("system settings", Settings.ACTION_SETTINGS, settingsApp),
             SettingsEntry("wi-fi", Settings.ACTION_WIFI_SETTINGS),
             SettingsEntry("bluetooth", Settings.ACTION_BLUETOOTH_SETTINGS),
@@ -380,6 +401,10 @@ class Apps(
         const val ACTION_TV = "dev.x360reborn.TOGGLE_TV"
         /** Launcher-internal action: show/hide the music channel. */
         const val ACTION_MUSIC = "dev.x360reborn.TOGGLE_MUSIC"
+        /** Launcher-internal action: save every launcher setting to a file the user picks. */
+        const val ACTION_BACKUP = "dev.x360reborn.BACKUP"
+        /** Launcher-internal action: replace every launcher setting from a backup file. */
+        const val ACTION_RESTORE = "dev.x360reborn.RESTORE"
         /** Icon-cache floor, in icons. */
         private const val MIN_ICONS = 48
         /** Full-size hero rasters kept (the current hero plus a few recent ones). */

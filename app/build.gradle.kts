@@ -11,8 +11,8 @@ android {
         applicationId = "dev.x360reborn"
         minSdk = 33
         targetSdk = 36
-        versionCode = 11
-        versionName = "0.5.2"
+        versionCode = 12
+        versionName = "0.5.3"
     }
 
     // Release signing comes from ~/.gradle/gradle.properties (never the repo): REBORN_KEYSTORE,
@@ -51,4 +51,6 @@ kotlin {
 
 dependencies {
     testImplementation("junit:junit:4.13.2")
+    // The real org.json for JVM tests (android.jar only has stubs); Backup uses it.
+    testImplementation("org.json:json:20240303")
 }

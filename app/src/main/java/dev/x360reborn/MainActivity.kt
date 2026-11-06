@@ -267,6 +267,17 @@ class MainActivity : Activity() {
                 toggleChannel("tv & movies")
             } else if (t.name == Apps.ACTION_MUSIC) {
                 toggleChannel("music")
+            } else if (t.name == Apps.ACTION_BACKUP) {
+                pickFile(Intent(Intent.ACTION_CREATE_DOCUMENT)
+                    .addCategory(Intent.CATEGORY_OPENABLE)
+                    .setType("application/json")
+                    .putExtra(Intent.EXTRA_TITLE, "x360reborn-settings.json"), REQ_BACKUP)
+            } else if (t.name == Apps.ACTION_RESTORE) {
+                pickFile(Intent(Intent.ACTION_OPEN_DOCUMENT)
+                    .addCategory(Intent.CATEGORY_OPENABLE)
+                    // .json often has no registered MIME type, so accept the usual stand-ins too.
+                    .setType("*/*")
+                    .putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("application/json", "text/plain", "application/octet-stream")), REQ_RESTORE)
             } else try {
                 startActivity(Intent(t.name).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
                     ActivityOptions.makeCustomAnimation(this, android.R.anim.fade_in, 0).toBundle())
@@ -318,6 +329,67 @@ class MainActivity : Activity() {
             view.play(Trans.TO)
             Toast.makeText(this, "Can't open ${tile.label}", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    private fun pickFile(intent: Intent, request: Int) {
+        try {
+            @Suppress("DEPRECATION") // plain Activity: no AndroidX result API here
+            startActivityForResult(intent, request)
+            handedOff()
+        } catch (e: ActivityNotFoundException) {
+            Toast.makeText(this, "No file picker on this device", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        @Suppress("DEPRECATION")
+        super.onActivityResult(requestCode, resultCode, data)
+        val uri = data?.data
+        if (resultCode != RESULT_OK || uri == null) return
+        when (requestCode) {
+            REQ_BACKUP -> saveBackup(uri)
+            REQ_RESTORE -> confirmRestore(uri)
+        }
+    }
+
+    private fun saveBackup(uri: Uri) {
+        try {
+            val text = apps.exportSettings()
+            contentResolver.openOutputStream(uri, "wt")!!.use { it.write(text.toByteArray(Charsets.UTF_8)) }
+            Toast.makeText(this, "Settings backed up", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            Log.w(TAG, "backup failed", e)
+            Toast.makeText(this, "Couldn't save the backup", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun confirmRestore(uri: Uri) {
+        val values = try {
+            val text = contentResolver.openInputStream(uri)!!.use { it.readBytes().toString(Charsets.UTF_8) }
+            Backup.decode(text)
+        } catch (e: Backup.BadBackup) {
+            Toast.makeText(this, e.message, Toast.LENGTH_LONG).show()
+            return
+        } catch (e: Exception) {
+            Log.w(TAG, "restore read failed", e)
+            Toast.makeText(this, "Couldn't read that file", Toast.LENGTH_LONG).show()
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Restore settings")
+            .setMessage("Your pins, folders, recents, theme and layout will be replaced with the ones in this backup.")
+            .setPositiveButton("Restore") { _, _ ->
+                if (apps.importSettings(values)) {
+                    Toast.makeText(this, "Settings restored", Toast.LENGTH_SHORT).show()
+                    // Theme, tile size, background and clock are read in onCreate: start over.
+                    recreate()
+                } else {
+                    Toast.makeText(this, "Couldn't restore settings", Toast.LENGTH_LONG).show()
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     /** Settings-channel Xbox entry: grant all-files access when missing, otherwise re-scan. */
@@ -497,6 +569,8 @@ class MainActivity : Activity() {
         const val TAG = "X360Reborn"
         /** How long a hand-off may leave us resumed (no onPause) before the hub reappears. */
         const val HANDOFF_GUARD_MS = 2_000L
+        const val REQ_BACKUP = 1
+        const val REQ_RESTORE = 2
         /** Xendroid+'s emulator launch action (EmulatorHostActivity). */
         const val ACTION_XENDROID = "xendroid.intent.action.xendroid"
         /** Release builds install as .fork; the plain package is the suffix-overridden build. */

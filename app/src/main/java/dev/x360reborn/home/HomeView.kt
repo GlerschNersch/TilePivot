@@ -13,6 +13,7 @@ import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
+import android.os.Bundle
 import android.os.SystemClock
 import android.provider.Settings
 import android.text.TextPaint
@@ -23,6 +24,11 @@ import android.view.SoundEffectConstants
 import android.view.ScaleGestureDetector
 import android.view.VelocityTracker
 import android.view.View
+import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityManager
+import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityNodeProvider
+import android.widget.Button
 import android.view.ViewConfiguration
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -199,6 +205,7 @@ class HomeView(
         }
         fit()
         invalidate()
+        a11yTreeChanged()
     }
 
     private fun defaultSlot(page: Int): Int {
@@ -820,6 +827,31 @@ class HomeView(
                 canvas.drawCircle(cx + size * 0.17f, cy + size * 0.15f, size * 0.09f, fill)
                 fill.color = Metrics.TEXT
             }
+            Glyph.BACKUP, Glyph.RESTORE -> {
+                // A tray with an arrow: up out of it to back up, down into it to restore.
+                fill.style = Paint.Style.STROKE
+                fill.strokeWidth = size * 0.1f
+                val l = x + size * 0.14f
+                val r = x + size * 0.86f
+                val trayTop = y + size * 0.6f
+                val bottom = y + size * 0.86f
+                canvas.drawLine(l, trayTop, l, bottom, fill)
+                canvas.drawLine(l, bottom, r, bottom, fill)
+                canvas.drawLine(r, bottom, r, trayTop, fill)
+                val cx = x + size / 2f
+                val top = y + size * 0.1f
+                val tip = y + size * 0.66f
+                canvas.drawLine(cx, top, cx, tip, fill)
+                val head = size * 0.2f
+                if (tile.glyph == Glyph.BACKUP) {
+                    canvas.drawLine(cx, top, cx - head, top + head, fill)
+                    canvas.drawLine(cx, top, cx + head, top + head, fill)
+                } else {
+                    canvas.drawLine(cx, tip, cx - head, tip - head, fill)
+                    canvas.drawLine(cx, tip, cx + head, tip - head, fill)
+                }
+                fill.style = Paint.Style.FILL
+            }
             Glyph.NONE -> {}
         }
     }
@@ -944,6 +976,8 @@ class HomeView(
         twistFocused = false
         animateScrollTo(page)
         if (channelChanged) startCascade(page)
+        a11yTreeChanged()
+        a11yFocusMoved()
     }
 
     private fun goToChannel(ch: Int, keepTwist: Boolean) {
@@ -951,6 +985,271 @@ class HomeView(
         goToPage(c.firstPage, defaultSlot(c.firstPage))
         if (keepTwist) { twistFocused = true }
         playSoundEffect(SoundEffectConstants.NAVIGATION_RIGHT)
+    }
+
+    // ---- accessibility -----------------------------------------------------------------------
+    //
+    // The hub is one custom-drawn view, so screen readers saw nothing in it. This exposes it
+    // through the framework AccessibilityNodeProvider (no AndroidX here) as virtual views:
+    // every tile on the current page plus every channel in the twist. TalkBack's two-finger
+    // swipe (scroll forward/backward on the hub) pages the horizon, touch exploration finds
+    // tiles under the finger, double-tap launches, and double-tap-and-hold opens the options.
+    // Gamepad / d-pad focus moves are announced too, and accessibility focus moves the
+    // visual focus, so a sighted helper sees where the reader is.
+
+    private val a11y = context.getSystemService(AccessibilityManager::class.java)
+    /** Virtual view holding accessibility focus, or [NO_VIRTUAL]. */
+    private var a11yFocus = NO_VIRTUAL
+    /** Virtual view under the exploring finger, or [NO_VIRTUAL]. */
+    private var a11yHover = NO_VIRTUAL
+
+    private fun isTileId(id: Int) = id in TILE_BASE until TWIST_BASE
+    private fun isTwistId(id: Int) = id >= TWIST_BASE
+
+    /** Spoken name for [tile]: what it is, plus the state the screen shows beside it. */
+    private fun describe(tile: Tile): String = when {
+        tile.target is Target.Game -> "${tile.label}, Xbox 360 game, ${tile.sub}"
+        tile.glyph == Glyph.FOLDER -> "${tile.label}, folder, ${tile.sub}"
+        tile.kind == Kind.HERO && tile.sub.isNotEmpty() -> "${tile.label}, ${tile.sub}"
+        tile.target is Target.Channel -> "${tile.label}, channel"
+        else -> tile.label
+    }
+
+    private fun tileAt(id: Int): Tile? {
+        if (!isTileId(id)) return null
+        val p = hub.pages.getOrNull(focusPage) ?: return null
+        val slot = id - TILE_BASE
+        return if (p.focusable(slot)) p.tiles[slot] else null
+    }
+
+    private fun describeId(id: Int): String? = when {
+        isTileId(id) -> tileAt(id)?.let(::describe)
+        isTwistId(id) -> hub.channels.getOrNull(id - TWIST_BASE)?.title
+        else -> null
+    }
+
+    /**
+     * Where virtual view [id] sits on screen, at rest: the page's settled position, not
+     * the mid-scroll one, so the bounds are right while the horizon is still animating.
+     */
+    private fun a11yBounds(id: Int, out: Rect): Boolean {
+        val loc = IntArray(2)
+        getLocationOnScreen(loc)
+        val (dx, dy, w, h) = when {
+            isTileId(id) -> {
+                val p = hub.pages.getOrNull(focusPage) ?: return false
+                val b = p.template.slots.getOrNull(id - TILE_BASE) ?: return false
+                floatArrayOf((L.w - p.template.w) / 2f + b.x, pageY(focusPage) + b.y, b.w, b.h)
+            }
+            isTwistId(id) -> {
+                val i = id - TWIST_BASE
+                if (i !in hub.channels.indices) return false
+                val widths = hub.channels.map { twistText.measureText(it.title) + Metrics.TWIST_GAP }
+                val cur = hub.channelOf(focusPage)
+                var x = L.twistX
+                for (j in 0 until i) x += widths[j]
+                for (j in 0 until cur) x -= widths[j]
+                floatArrayOf(x, L.twistY, widths[i] - Metrics.TWIST_GAP, Metrics.TWIST_H)
+            }
+            else -> return false
+        }
+        val l = loc[0] + ox + dx * s
+        val t = loc[1] + oy + dy * s
+        out.set(l.roundToInt(), t.roundToInt(), (l + w * s).roundToInt(), (t + h * s).roundToInt())
+        // Channels scrolled off the strip are left out rather than given off-screen bounds.
+        return out.right > loc[0] && out.left < loc[0] + width
+    }
+
+    /** Virtual views, in reading order: the twist, then the current page's tiles. */
+    private fun a11yChildren(): List<Int> {
+        val ids = ArrayList<Int>()
+        val r = Rect()
+        for (i in hub.channels.indices) if (a11yBounds(TWIST_BASE + i, r)) ids += TWIST_BASE + i
+        val p = hub.pages.getOrNull(focusPage) ?: return ids
+        val order = p.template.slots.indices.filter { p.focusable(it) }
+            .sortedWith(compareBy({ p.template.slots[it].y }, { p.template.slots[it].x }))
+        for (slot in order) ids += TILE_BASE + slot
+        return ids
+    }
+
+    private val provider = object : AccessibilityNodeProvider() {
+        override fun createAccessibilityNodeInfo(id: Int): AccessibilityNodeInfo? {
+            if (id == HOST_VIEW_ID) {
+                val info = AccessibilityNodeInfo(this@HomeView)
+                onInitializeAccessibilityNodeInfo(info)
+                for (child in a11yChildren()) info.addChild(this@HomeView, child)
+                val ch = hub.channels.getOrNull(hub.channelOf(focusPage))
+                if (ch != null) {
+                    val inPage = focusPage - ch.firstPage + 1
+                    info.stateDescription = if (ch.pageCount > 1) "${ch.title}, page $inPage of ${ch.pageCount}" else ch.title
+                }
+                info.isScrollable = hub.pages.size > 1
+                if (focusPage < hub.pages.size - 1) info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_FORWARD)
+                if (focusPage > 0) info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_BACKWARD)
+                return info
+            }
+            val text = describeId(id) ?: return null
+            val r = Rect()
+            if (!a11yBounds(id, r)) return null
+            val n = AccessibilityNodeInfo(this@HomeView, id)
+            n.setParent(this@HomeView)
+            n.packageName = context.packageName
+            n.className = Button::class.java.name
+            n.contentDescription = text
+            n.setBoundsInScreen(r)
+            n.isVisibleToUser = true
+            n.isEnabled = true
+            n.isFocusable = true
+            n.isClickable = true
+            n.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_CLICK)
+            if (isTwistId(id)) {
+                val current = id - TWIST_BASE == hub.channelOf(focusPage)
+                n.isSelected = current
+                n.isHeading = current
+                n.stateDescription = if (current) "current channel" else "channel"
+            } else {
+                n.isFocused = !twistFocused && id - TILE_BASE == focusSlot
+                val tile = tileAt(id)
+                if (tile != null && hasOptions(tile)) {
+                    n.isLongClickable = true
+                    n.addAction(AccessibilityNodeInfo.AccessibilityAction(AccessibilityNodeInfo.ACTION_LONG_CLICK, "options"))
+                }
+            }
+            n.isAccessibilityFocused = a11yFocus == id
+            n.addAction(
+                if (a11yFocus == id) AccessibilityNodeInfo.AccessibilityAction.ACTION_CLEAR_ACCESSIBILITY_FOCUS
+                else AccessibilityNodeInfo.AccessibilityAction.ACTION_ACCESSIBILITY_FOCUS,
+            )
+            return n
+        }
+
+        override fun performAction(id: Int, action: Int, args: Bundle?): Boolean {
+            if (id == HOST_VIEW_ID) {
+                return when (action) {
+                    AccessibilityNodeInfo.ACTION_SCROLL_FORWARD -> a11yPage(1)
+                    AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD -> a11yPage(-1)
+                    else -> performAccessibilityAction(action, args)
+                }
+            }
+            if (describeId(id) == null) return false
+            return when (action) {
+                AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS -> {
+                    if (a11yFocus == id) return false
+                    val old = a11yFocus
+                    a11yFocus = id
+                    if (old != NO_VIRTUAL) a11yEvent(old, AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUS_CLEARED)
+                    // The visual focus follows the reader, so the focused tile lights up.
+                    if (isTileId(id)) { focusSlot = id - TILE_BASE; twistFocused = false; invalidate() }
+                    a11yEvent(id, AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED)
+                    true
+                }
+                AccessibilityNodeInfo.ACTION_CLEAR_ACCESSIBILITY_FOCUS -> {
+                    if (a11yFocus != id) return false
+                    a11yFocus = NO_VIRTUAL
+                    a11yEvent(id, AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUS_CLEARED)
+                    true
+                }
+                AccessibilityNodeInfo.ACTION_CLICK -> {
+                    if (away) return false
+                    if (isTwistId(id)) goToChannel(id - TWIST_BASE, false)
+                    else { focusSlot = id - TILE_BASE; twistFocused = false; activate(focusPage, focusSlot) }
+                    a11yEvent(id, AccessibilityEvent.TYPE_VIEW_CLICKED)
+                    true
+                }
+                AccessibilityNodeInfo.ACTION_LONG_CLICK -> {
+                    val tile = tileAt(id) ?: return false
+                    if (away || !hasOptions(tile)) return false
+                    focusSlot = id - TILE_BASE; twistFocused = false; invalidate()
+                    onLongPress(tile)
+                    a11yEvent(id, AccessibilityEvent.TYPE_VIEW_LONG_CLICKED)
+                    true
+                }
+                else -> false
+            }
+        }
+
+        override fun findFocus(focus: Int): AccessibilityNodeInfo? = when (focus) {
+            AccessibilityNodeInfo.FOCUS_ACCESSIBILITY ->
+                if (a11yFocus != NO_VIRTUAL) createAccessibilityNodeInfo(a11yFocus) else null
+            AccessibilityNodeInfo.FOCUS_INPUT ->
+                if (!twistFocused) createAccessibilityNodeInfo(TILE_BASE + focusSlot) else null
+            else -> null
+        }
+    }
+
+    override fun getAccessibilityNodeProvider(): AccessibilityNodeProvider = provider
+
+    /** Long-press options exist for app tiles and folder tiles (see MainActivity.options). */
+    private fun hasOptions(tile: Tile) =
+        tile.target is Target.App || (tile.target is Target.Channel && tile.folderId != null)
+
+    /** Reader scroll: one page along the horizon, then put the reader on that page's default tile. */
+    private fun a11yPage(step: Int): Boolean {
+        val target = focusPage + step
+        if (away || target !in hub.pages.indices) return false
+        goToPage(target, defaultSlot(target))
+        provider.performAction(TILE_BASE + focusSlot, AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null)
+        return true
+    }
+
+    /** Sends [type] for virtual view [id] (or the hub itself for [AccessibilityNodeProvider.HOST_VIEW_ID]). */
+    private fun a11yEvent(id: Int, type: Int, changeTypes: Int = 0) {
+        if (!a11y.isEnabled) return
+        val parent = parent ?: return
+        val ev = AccessibilityEvent(type)
+        ev.packageName = context.packageName
+        if (id == AccessibilityNodeProvider.HOST_VIEW_ID) {
+            ev.setSource(this)
+            ev.className = javaClass.name
+        } else {
+            ev.setSource(this, id)
+            ev.className = Button::class.java.name
+            ev.contentDescription = describeId(id)
+        }
+        if (changeTypes != 0) ev.contentChangeTypes = changeTypes
+        parent.requestSendAccessibilityEvent(this, ev)
+    }
+
+    /** The visible tiles changed (new page, new hub): readers must re-read the tree. */
+    private fun a11yTreeChanged() {
+        if (!a11y.isEnabled) return
+        // Focus on a tile of the old page would point at a different tile now.
+        if (isTileId(a11yFocus)) a11yFocus = NO_VIRTUAL
+        a11yEvent(AccessibilityNodeProvider.HOST_VIEW_ID, AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
+            AccessibilityEvent.CONTENT_CHANGE_TYPE_SUBTREE)
+    }
+
+    /** D-pad / gamepad focus moved: announce the newly focused tile. */
+    private fun a11yFocusMoved() {
+        if (!a11y.isEnabled || twistFocused) return
+        a11yEvent(TILE_BASE + focusSlot, AccessibilityEvent.TYPE_VIEW_FOCUSED)
+    }
+
+    /** Virtual view under a touch-exploration point, or [NO_VIRTUAL]. */
+    private fun virtualAt(x: Float, y: Float): Int {
+        val r = Rect()
+        val loc = IntArray(2)
+        getLocationOnScreen(loc)
+        val sx = (x + loc[0]).roundToInt()
+        val sy = (y + loc[1]).roundToInt()
+        for (id in a11yChildren()) if (a11yBounds(id, r) && r.contains(sx, sy)) return id
+        return NO_VIRTUAL
+    }
+
+    override fun dispatchHoverEvent(e: MotionEvent): Boolean {
+        // With touch exploration on, a finger arrives as hover events: map them to tiles.
+        if (!a11y.isEnabled || !a11y.isTouchExplorationEnabled) return super.dispatchHoverEvent(e)
+        val id = when (e.actionMasked) {
+            MotionEvent.ACTION_HOVER_ENTER, MotionEvent.ACTION_HOVER_MOVE -> virtualAt(e.x, e.y)
+            else -> NO_VIRTUAL
+        }
+        if (id != a11yHover) {
+            val old = a11yHover
+            a11yHover = id
+            if (id != NO_VIRTUAL) a11yEvent(id, AccessibilityEvent.TYPE_VIEW_HOVER_ENTER)
+            if (old != NO_VIRTUAL) a11yEvent(old, AccessibilityEvent.TYPE_VIEW_HOVER_EXIT)
+        }
+        return true
     }
 
     // ---- input -------------------------------------------------------------------------------
@@ -997,7 +1296,7 @@ class HomeView(
         val boxes = p.template.slots
         val next = if (p.focusable(focusSlot)) Nav.move(boxes, p::focusable, focusSlot, dx, dy) else -1
         when {
-            next >= 0 -> { focusSlot = next; playSoundEffect(SoundEffectConstants.CLICK); invalidate() }
+            next >= 0 -> { focusSlot = next; playSoundEffect(SoundEffectConstants.CLICK); invalidate(); a11yFocusMoved() }
             dy < 0 -> { twistFocused = true; twistFocusStart = SystemClock.uptimeMillis(); invalidate() }
             dx != 0 -> {
                 val target = focusPage + dx
@@ -1050,6 +1349,10 @@ class HomeView(
         const val BADGE_INSET = 3f
         /** Design px past the screen edge a page may reach and still be drawn (focus growth, shadow). */
         const val CULL_SLACK = 48f
+        /** Accessibility virtual-view ids: tiles are TILE_BASE + slot, channels TWIST_BASE + index. */
+        const val TILE_BASE = 0
+        const val TWIST_BASE = 10_000
+        const val NO_VIRTUAL = Int.MIN_VALUE
         /** Hover chrome fade, in and out. */
         const val CHROME_FADE_MS = 150f
     }
