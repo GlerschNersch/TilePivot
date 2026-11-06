@@ -1,4 +1,4 @@
-# X360 Reborn: RE notes
+# TilePivot: RE notes
 
 Source: Xbox 360 system update 2.0.17559 (final Metro dash), the `$SystemUpdate` folder of the USB update package.
 Everything extracted lands in `re/out` (gitignored, reference only, never shipped).
@@ -422,6 +422,34 @@ page fills its panel and its tiles hit-test exactly (the tapped corner tile
 is the one that answered). Tests 78/78: 3 new (canonical rect across
 channels, canonical height values, apps/settings stay hero-less) and two
 folder tests reworked for hero-bearing folder pages.
+
+## App v0.7.0 (2026-11-06): renamed to TilePivot
+
+- The app is renamed X360Reborn -> TilePivot for Google Play trademark hygiene:
+  the old name leaned on Microsoft's Xbox 360 brand. The app label and all
+  user-visible strings now say TilePivot. Nothing about the UI's measured
+  homage changes in this chunk; the store listing and its not-affiliated
+  wording are a later chunk.
+- applicationId changed dev.x360reborn -> dev.tilepivot (build.gradle.kts
+  only, following the Orbital rename precedent). The code namespace and the
+  Kotlin packages stay dev.x360reborn, no source moved, and the release
+  signing key is unchanged.
+- Because the applicationId changed, TilePivot installs as a NEW app alongside
+  the old one; Android will not update an existing X360Reborn install in
+  place. Migration path for existing installs: in the old app, use the
+  settings channel's "back up settings"; install TilePivot; then use its
+  "restore settings" and pick the exported file. Two deliberate compat
+  choices make that work: the backup JSON "format" field keeps its legacy
+  value ("x360reborn-settings") so pre-rename backups restore unchanged, and
+  the default export filename is now tilepivot-settings.json. The Xbox 360
+  game library needs no migration: the scanner re-reads the same shared
+  folders on first launch. All-files access is granted per app, so it must be
+  granted once for TilePivot from its settings channel.
+- REQUEST_DELETE_PACKAGES removed from the manifest: it was never used -
+  uninstall has always gone through the system ACTION_DELETE confirmation.
+- MANAGE_EXTERNAL_STORAGE is KEPT in this chunk on purpose: the game scanner
+  still reads the shared game folders directly and needs it. Removing it
+  belongs to the later SAF (folder-picker) migration chunk, not this rename.
 
 ## Next
 - Hover chrome: first live visual check on hardware with a real pointing device (the
