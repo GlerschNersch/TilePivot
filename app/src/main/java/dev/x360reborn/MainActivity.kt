@@ -25,6 +25,7 @@ import android.widget.ListView
 import android.widget.Toast
 import android.window.OnBackInvokedDispatcher
 import dev.x360reborn.home.AppInfo
+import dev.x360reborn.home.GAME_ART
 import dev.x360reborn.home.HomeView
 import dev.x360reborn.home.HubBuilder
 import dev.x360reborn.home.Search
@@ -39,6 +40,7 @@ class MainActivity : Activity() {
     private lateinit var view: HomeView
     private lateinit var apps: Apps
     private lateinit var games: Games
+    private lateinit var covers: Covers
     private val loader = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
     private val launcherApps by lazy { getSystemService(LauncherApps::class.java) }
@@ -65,8 +67,11 @@ class MainActivity : Activity() {
         hadAccess = games.hasAccess()
         // The theme must be active before the view caches its first colours.
         Themes.active = Themes.byId(apps.themeId)
-        view = HomeView(this, ::launch, ::options, apps::icon, apps::badge, { reload() }, ::tileSizeChosen, ::openSearch)
-        view.heroIconFor = apps::heroIcon
+        covers = Covers { main.post { view.invalidate() } }
+        // Game cover keys go to the cover cache, everything else is an app icon.
+        view = HomeView(this, { k -> if (k.startsWith(GAME_ART)) covers.get(k) else apps.icon(k) },
+            ::launch, ::options, apps::badge, { reload() }, ::tileSizeChosen, ::openSearch)
+        view.heroIconFor = { k -> if (k.startsWith(GAME_ART)) covers.get(k) else apps.heroIcon(k) }
         view.tileSize = apps.tileSize
         view.bgStyle = apps.bgStyle
         view.clock24h = apps.clock24h
@@ -147,6 +152,7 @@ class MainActivity : Activity() {
         main.removeCallbacksAndMessages(null)
         loader.shutdownNow()
         apps.close()
+        covers.close()
         super.onDestroy()
     }
 
@@ -162,6 +168,7 @@ class MainActivity : Activity() {
             appList = list
             // The game list is cached (see Games): most rebuilds don't touch the folders.
             val gameList = games.load(force = rescanGames)
+            covers.update(gameList)
             val hub = HubBuilder.build(
                 list, apps.recent(), apps.pins(),
                 apps.settingsEntries(games.hasAccess(), games.found),
@@ -172,6 +179,7 @@ class MainActivity : Activity() {
             main.post { if (view.wanted == layout) view.setHub(hub) }
             // A frame shows at most three pages (two mid-swipe, plus letterbox edges in landscape).
             apps.fitIconCache(3 * maxOf(layout.grid.slots.size, layout.home.slots.size), gridPx, heroPx)
+            covers.edgePx = maxOf(gridPx, heroPx)
             // Home-page icons first, so the visible tiles fill in, then the rest in page order.
             val visible = hub.pages[0].tiles.mapNotNull { it.iconKey }
             val later = hub.pages.drop(1).flatMap { p -> p.tiles.mapNotNull { it.iconKey } }

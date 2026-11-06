@@ -46,9 +46,10 @@ import kotlin.math.roundToInt
 @SuppressLint("ViewConstructor")
 class HomeView(
     context: Context,
+    /** Art for an icon key: an app icon, or a game cover ([GAME_ART] keys). Null while loading. */
+    private val iconFor: (String) -> Bitmap?,
     private val onLaunch: (Tile, Rect) -> Unit,
     private val onLongPress: (Tile) -> Unit,
-    private val iconFor: (String) -> Bitmap?,
     /** Work-profile badge art for an app key (a full icon canvas, badge in its corner), or null. */
     private val badgeFor: (String) -> Bitmap?,
     /** Asked to rebuild the hub when rotation changes the layout. */

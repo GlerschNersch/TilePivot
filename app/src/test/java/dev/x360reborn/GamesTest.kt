@@ -2,6 +2,7 @@ package dev.x360reborn
 
 import dev.x360reborn.home.AppInfo
 import dev.x360reborn.home.Category
+import dev.x360reborn.home.GAME_ART
 import dev.x360reborn.home.GameInfo
 import dev.x360reborn.home.Glyph
 import dev.x360reborn.home.HubBuilder
@@ -215,5 +216,95 @@ class GamesTest {
         file(root, "Two.iso", big)
         assertEquals(2, games.load().size)
         assertEquals(2, games.scans)
+    }
+
+    // ---- cover art ---------------------------------------------------------------------------
+
+    private val pngSig = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)
+    private fun fakePng(n: Int) = pngSig + ByteArray(n - pngSig.size) { 3 }
+
+    /** Synthetic STFS header with optional thumbnails at the XContent offsets. */
+    private fun stfsWithThumbs(thumb: ByteArray?, titleThumb: ByteArray?, thumbSize: Int? = null): ByteArray {
+        val b = stfsHeader("Art Game", totalBytes = 0x9800)
+        fun u32(at: Int, v: Int) { for (k in 0 until 4) b[at + k] = (v ushr (24 - 8 * k)).toByte() }
+        if (thumb != null) { u32(0x1712, thumbSize ?: thumb.size); thumb.copyInto(b, 0x171A) }
+        if (titleThumb != null) { u32(0x1716, titleThumb.size); titleThumb.copyInto(b, 0x571A) }
+        return b
+    }
+
+    @Test fun stfsThumbnailReadsTheContentThumbnail() {
+        val root = tmp.newFolder("Xbox360")
+        val png = fakePng(300)
+        val f = file(root, "58410A01", stfsWithThumbs(png, fakePng(200)))
+        assertTrue(png.contentEquals(GameScanner.stfsThumbnail(f)!!))
+    }
+
+    @Test fun stfsThumbnailFallsBackToTheTitleThumbnail() {
+        val root = tmp.newFolder("Xbox360")
+        val title = fakePng(200)
+        val f = file(root, "58410A02", stfsWithThumbs(null, title))
+        assertTrue(title.contentEquals(GameScanner.stfsThumbnail(f)!!))
+    }
+
+    @Test fun stfsThumbnailRejectsBadSizesAndNonPng() {
+        val root = tmp.newFolder("Xbox360")
+        // Size bigger than the 0x4000 slot.
+        assertEquals(null, GameScanner.stfsThumbnail(file(root, "a", stfsWithThumbs(fakePng(64), null, thumbSize = 0x4001))))
+        // Data without the PNG signature.
+        assertEquals(null, GameScanner.stfsThumbnail(file(root, "b", stfsWithThumbs(ByteArray(64) { 1 }, null))))
+        // No thumbnails at all (the 17559 system packages look like this).
+        assertEquals(null, GameScanner.stfsThumbnail(file(root, "c", stfsWithThumbs(null, null))))
+        // Not STFS.
+        assertEquals(null, GameScanner.stfsThumbnail(file(root, "d.iso", big)))
+    }
+
+    @Test fun godPackageWithThumbnailHasEmbeddedArt() {
+        val root = tmp.newFolder("Xbox360")
+        file(root, "58410A03", stfsWithThumbs(fakePng(100), null))
+        file(root, "58410A04", stfsWithThumbs(null, null))
+        val byName = GameScanner.scan(listOf(root)).associateBy { File(it.path).name }
+        assertTrue(byName.getValue("58410A03").embeddedArt)
+        assertEquals(false, byName.getValue("58410A04").embeddedArt)
+    }
+
+    @Test fun sidecarImageIsTheCoverAndWinsOverEmbeddedArt() {
+        val root = tmp.newFolder("Xbox360")
+        file(root, "Skate 3 (USA, Europe).iso", big)
+        val png = file(root, "Skate 3 (USA, Europe).PNG", ByteArray(10))
+        file(root, "58410A05", stfsWithThumbs(fakePng(100), null))
+        val jpg = file(root, "58410A05.jpg", ByteArray(10))
+        val games = GameScanner.scan(listOf(root)).associateBy { File(it.path).name }
+        assertEquals(png.absolutePath, games.getValue("Skate 3 (USA, Europe).iso").cover)
+        val god = games.getValue("58410A05")
+        assertEquals(jpg.absolutePath, god.cover)
+        assertEquals(false, god.embeddedArt)
+    }
+
+    @Test fun folderGameFindsCoverInsideItsFolder() {
+        val root = tmp.newFolder("Xbox360")
+        val dir = File(root, "Folder Game")
+        file(dir, "default.xex", big)
+        val cover = file(dir, "Boxart.jpg", ByteArray(10))
+        assertEquals(cover.absolutePath, GameScanner.scan(listOf(root))[0].cover)
+    }
+
+    @Test fun gamesWithoutArtKeepTheGlyphTile() {
+        val root = tmp.newFolder("Xbox360")
+        file(root, "No Art.iso", big)
+        file(root, "With Art.iso", big)
+        file(root, "With Art.png", ByteArray(10))
+        val games = GameScanner.scan(listOf(root))
+        val hub = HubBuilder.build(emptyList(), emptyList(), emptyList(), settings, games360 = games)
+        val tiles = hub.pages.flatMap { it.tiles }.filter { it.target is Target.Game }.associateBy { it.label }
+        assertEquals(null, tiles.getValue("No Art").iconKey)
+        assertEquals(GAME_ART + File(root, "With Art.iso").absolutePath, tiles.getValue("With Art").iconKey)
+        assertEquals(Glyph.GAMEPAD, tiles.getValue("With Art").glyph)
+    }
+
+    @Test fun coverSubsamplingKeepsTheShortEdgeAboveTheTarget() {
+        assertEquals(1, Covers.sampleSize(64, 64, 300))
+        assertEquals(1, Covers.sampleSize(599, 800, 300))
+        assertEquals(2, Covers.sampleSize(600, 800, 300))
+        assertEquals(4, Covers.sampleSize(1400, 2000, 300))
     }
 }

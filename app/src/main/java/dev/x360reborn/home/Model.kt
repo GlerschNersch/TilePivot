@@ -10,8 +10,23 @@ data class AppInfo(val key: String, val label: String, val category: Category = 
 /** A user-created folder: an ordered set of app keys, shown as its own channel. */
 data class FolderInfo(val id: String, val name: String, val members: List<String>)
 
-/** An Xbox 360 game file on shared storage, launched through the Xendroid+ emulator. */
-data class GameInfo(val path: String, val name: String, val format: String)
+/**
+ * An Xbox 360 game file on shared storage, launched through the Xendroid+ emulator.
+ * [cover] is an image file the user placed beside the game; [embeddedArt] means the game's
+ * own STFS header carries a thumbnail (Games on Demand / XBLA). Either gives the tile art.
+ */
+data class GameInfo(
+    val path: String,
+    val name: String,
+    val format: String,
+    val cover: String? = null,
+    val embeddedArt: Boolean = false,
+) {
+    val hasArt get() = cover != null || embeddedArt
+}
+
+/** Icon-key prefix for game cover art (app icon keys are component names, so no clash). */
+const val GAME_ART = "game:"
 
 sealed interface Target {
     data class App(val key: String) : Target
@@ -100,7 +115,9 @@ object HubBuilder {
         add("home", emptyList())
         // Xbox 360 games ride in the games channel, after the Android game apps.
         val xboxTiles = games360.sortedBy { it.name.lowercase() }.map {
-            Tile(it.name, Target.Game(it.path), sub = it.format, glyph = Glyph.GAMEPAD, iconKey = null)
+            // Games with art show it; the rest keep the drawn controller glyph.
+            Tile(it.name, Target.Game(it.path), sub = it.format, glyph = Glyph.GAMEPAD,
+                iconKey = if (it.hasArt) GAME_ART + it.path else null)
         }
         for ((title, cat) in listOf("games" to Category.GAME, "tv & movies" to Category.VIDEO, "music" to Category.MUSIC)) {
             if (title in hiddenChannels) continue

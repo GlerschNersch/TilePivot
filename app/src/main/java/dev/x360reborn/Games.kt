@@ -46,7 +46,7 @@ object GameScanner {
                     it.isFile && it.name.equals("default.xex", ignoreCase = true)
                 }
                 if (xex != null) {
-                    add(GameInfo(xex.absolutePath, cleanName(entry.name), "XEX"))
+                    add(GameInfo(xex.absolutePath, cleanName(entry.name), "XEX", cover = folderCover(entry)))
                 } else if (depth + 1 < MAX_DEPTH) {
                     walk(entry, depth + 1, add)
                 }
@@ -63,14 +63,86 @@ object GameScanner {
                 // Tiny files with an image extension are junk (placeholders, partial downloads).
                 if (file.length() >= MIN_IMAGE_BYTES) {
                     val format = if (lower.endsWith(".iso")) "ISO" else "ZAR"
-                    add(GameInfo(file.absolutePath, cleanName(file.nameWithoutExtension), format))
+                    add(GameInfo(file.absolutePath, cleanName(file.nameWithoutExtension), format, cover = sidecarCover(file)))
                 }
             }
             // STFS containers (Games on Demand, XBLA) carry their type in the first 4 bytes.
             // Their real title is in the header metadata; the file name is a content ID.
-            file.length() >= 4 && hasStfsMagic(file) ->
-                add(GameInfo(file.absolutePath, stfsTitle(file) ?: cleanName(file.nameWithoutExtension), "GOD"))
+            file.length() >= 4 && hasStfsMagic(file) -> {
+                val cover = sidecarCover(file)
+                add(GameInfo(
+                    file.absolutePath, stfsTitle(file) ?: cleanName(file.nameWithoutExtension), "GOD",
+                    cover = cover,
+                    // A user's own cover wins, so the header is only probed without one.
+                    embeddedArt = cover == null && stfsThumbnail(file) != null,
+                ))
+            }
         }
+    }
+
+    /** Image extensions accepted for user-supplied covers, in preference order. */
+    private val COVER_EXT = listOf("png", "jpg", "jpeg", "webp")
+
+    /** Cover file names looked for inside a folder game, in preference order. */
+    private val COVER_NAMES = listOf("cover", "boxart", "folder")
+
+    /** "Game Name.iso" -> "Game Name.png" (or .jpg/.jpeg/.webp) beside it, any case. */
+    fun sidecarCover(game: File): String? {
+        val dir = game.parentFile ?: return null
+        val base = game.nameWithoutExtension
+        val names = runCatching { dir.list() }.getOrNull() ?: return null
+        for (ext in COVER_EXT) {
+            names.firstOrNull { it.equals("$base.$ext", ignoreCase = true) }?.let { return File(dir, it).absolutePath }
+        }
+        return null
+    }
+
+    /** cover.png / boxart.jpg / folder.jpg ... inside a folder game, any case. */
+    fun folderCover(dir: File): String? {
+        val names = runCatching { dir.list() }.getOrNull() ?: return null
+        for (n in COVER_NAMES) for (ext in COVER_EXT) {
+            names.firstOrNull { it.equals("$n.$ext", ignoreCase = true) }?.let { return File(dir, it).absolutePath }
+        }
+        return null
+    }
+
+    /**
+     * The PNG thumbnail in an STFS package's XContent header, or null.
+     *
+     * Layout (free60 XContent header): thumbnail size at 0x1712 and title-thumbnail size at
+     * 0x1716 (big-endian u32), the images themselves at 0x171A and 0x571A, each in a slot of
+     * at most 0x4000 bytes. The content's own thumbnail is preferred, the title's is the
+     * fallback. A size outside the slot or data without the PNG signature yields null, so a
+     * damaged or unusual header means "no art", never a broken image. (The 17559 system
+     * packages carry no thumbnails at all; both size fields are 0 in every one of them.)
+     */
+    fun stfsThumbnail(file: File): ByteArray? = runCatching {
+        val head = ByteArray(TITLE_THUMB_OFFSET + THUMB_SLOT)
+        val read = file.inputStream().use { input ->
+            var n = 0
+            while (n < head.size) {
+                val r = input.read(head, n, head.size - n)
+                if (r < 0) break
+                n += r
+            }
+            n
+        }
+        if (read < THUMB_OFFSET) return@runCatching null
+        if (STFS_MAGIC.none { m -> (0 until 4).all { head[it] == m[it].code.toByte() } }) return@runCatching null
+        pngAt(head, read, THUMB_OFFSET, u32be(head, THUMB_SIZE_AT))
+            ?: pngAt(head, read, TITLE_THUMB_OFFSET, u32be(head, TITLE_THUMB_SIZE_AT))
+    }.getOrNull()
+
+    private fun u32be(b: ByteArray, o: Int): Long =
+        ((b[o].toLong() and 0xFF) shl 24) or ((b[o + 1].toLong() and 0xFF) shl 16) or
+            ((b[o + 2].toLong() and 0xFF) shl 8) or (b[o + 3].toLong() and 0xFF)
+
+    private val PNG_SIG = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)
+
+    private fun pngAt(head: ByteArray, read: Int, off: Int, size: Long): ByteArray? {
+        if (size < PNG_SIG.size || size > THUMB_SLOT || off + size > read) return null
+        if (PNG_SIG.indices.any { head[off + it] != PNG_SIG[it] }) return null
+        return head.copyOfRange(off, off + size.toInt())
     }
 
     /**
@@ -135,6 +207,13 @@ object GameScanner {
     private const val TITLE_FIELD_BYTES = 0x80
     private const val LANG_SLOTS = 9
     private const val LANG_STRIDE = 0x200
+
+    // XContent header thumbnail layout (see stfsThumbnail).
+    private const val THUMB_SIZE_AT = 0x1712
+    private const val TITLE_THUMB_SIZE_AT = 0x1716
+    private const val THUMB_OFFSET = 0x171A
+    private const val TITLE_THUMB_OFFSET = 0x571A
+    private const val THUMB_SLOT = 0x4000
 }
 
 /**
