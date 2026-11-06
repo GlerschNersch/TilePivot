@@ -150,8 +150,8 @@ object HubBuilder {
                 })
                 in folderByChannel -> {
                     val f = folderByChannel.getValue(i)
-                    val (_, grid) = channelTemplates(layout, f.members.size)
-                    pages += gridPages(grid, i, f.members.map { appTile(byKey.getValue(it), f.id) })
+                    val (home, grid) = channelTemplates(layout, f.members.size)
+                    pages += contentPages(home, grid, i, f.members.map { appTile(byKey.getValue(it), f.id) })
                 }
                 else -> {
                     val (home, grid) = channelTemplates(layout, content[i].size)

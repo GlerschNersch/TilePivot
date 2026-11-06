@@ -334,6 +334,95 @@ cover hero (ghosted cover wash behind the framed art), a dark-icon hero
 (the wash is near-black there, as it should be), and the white Calendar
 hero with fully legible text.
 
+## App v0.6.1 (2026-11-06): one hero geometry for every channel
+
+### The census
+
+The hero panel (the big feature tile at the top of a channel's first page,
+`HomeView.drawHero`) did not have one geometry. It was whatever the channel's
+first-page template happened to produce, and the sparse-channel boost made
+those templates diverge. Measured on the phone (0.6.0): home's hero was
+full-width but short (a banner), the games hero was full-width and tall, the
+tv & movies and music heroes were tall but inset with side margins and a
+lower top edge, and apps/settings had no hero at all (decided: correct, they
+are utility grids). The same census reproduced on the AVD at SMALL
+(1080x2400, focused hero rects, device px): home (8, 233) to (1073, 629);
+games (8, 255) to (1073, 788); tv & movies and music (52, 306) to (1029, 856).
+
+Root cause, in layout terms: the portrait home template's hero is 264 design
+units tall at every tile size, the boosted games template scales it by the
+boost factor (x1.336 at SMALL, so 352.7), and a +2 boost lands on the LARGE
+template (650 wide) scaled by the LARGE cap (x1.848), which is narrower than
+the 708-wide panel, so its hero renders inset and, because pages centre
+vertically in the panel, lower.
+
+### The unification
+
+`Layout.heroBox` is now the single hero definition every hero-bearing channel
+consumes. In portrait it is the games channel's existing hero: full content
+width at the +1 boost step's height (the 7-18 tile band). At SMALL on a
+1080-wide phone that is Box(0, 0, 708, 352.7) in template space; at LARGE,
+where nothing boosts past it, it is the portrait template's own 352x198.
+First pages are composited onto it with `Template.withHero`: the hero slot is
+replaced by the canonical box, the tile slots keep their sizes, centred in
+the page width and shifted so the first row still starts one gutter under
+the hero, and the page height becomes the layout's panel height, so the
+hero's top edge is the panels' top edge on every channel. The portrait
+factory and `Layout.channelTemplates` both route through it, so the dense
+path, the boosted path and the home page resolve to the same rect by
+construction (unit tests pin the rect identical across home, games,
+tv & movies, music and a folder channel at all three tile sizes).
+
+Home composes by construction: its grid simply starts lower (one fewer tile
+row on the AVD at SMALL, 9 to 8; paging absorbs the rest). Focus geometry
+and hit-testing read the page's own template, so they follow; the entry
+cascade's delays derive from slot row/column ranks and are unchanged (hero
+is still rank 0).
+
+Folder channels gain a hero: they were the one hero-shaped channel still
+built from grid pages. They now build through the same content pages as the
+media channels, first member promoted to hero, which also gives the folder
+hero the canonical rect. The hero tile carries the member's long-press
+options, verified live on the emulator.
+
+Landscape is deliberately not composited: every landscape hero derives from
+the single Template1HD slot and scales uniformly with its page, so landscape
+heroes already share one definition. Forcing the unscaled canonical box into
+a boosted landscape template would overlap the slots beside the hero (the
+landscape boost scale can exceed the hero slot's x-offset ratio). If
+landscape hero sizes ever diverge per channel, revisit.
+
+### Ambience containment
+
+On the phone, home's ambient wash read as bleeding over the first tile row.
+Measured on the AVD: the wash's extent is exactly the hero panel's own extent
+(the softened bitmap is drawn into the hero rect, under the panel's
+transform). What crosses onto the tile row is the whole focused panel, grown
+1.08x like every focused tile, wash included (about 15 px of overhang past
+the slot's bottom edge at SMALL). The wash never extends past the panel body
+in either build. In 0.6.1 `drawAmbience` additionally clips the bitmap and
+scrim to the hero rect explicitly, so the containment is structural rather
+than incidental; column profiles through the wash confirm the colour stops
+at the panel's bottom edge.
+
+### Emulator proof
+
+AVD 1080x2400 at SMALL; hero rects measured by luminance gradient-peak edge
+detection on settled screenshots, within +/-45 px of the layout prediction,
+cross-checked against an unfocused hero, which matched its predicted slot
+rect to 2 px. After 0.6.1 the focused hero rect is (8, 227) to (1073, 758)
+on all five hero-bearing channels (home, games, tv & movies, music, and a
+purpose-built folder channel), identical within 1 px on the left, right and
+bottom edges and 3 px on the top (the panel's soft shadow). The slot rect
+itself is (47, 247) at 985x491 px, i.e. design Box(34, 177.2, 708, 352.7) at
+the SMALL layout. Screenshots: `~/workspace/x360reborn/shots-phase61/`
+(before/after per channel). Spot checks: DPAD focus movement and
+tap-to-launch on home page 1 align with the new geometry; the boosted games
+page fills its panel and its tiles hit-test exactly (the tapped corner tile
+is the one that answered). Tests 78/78: 3 new (canonical rect across
+channels, canonical height values, apps/settings stay hero-less) and two
+folder tests reworked for hero-bearing folder pages.
+
 ## Next
 - Hover chrome: first live visual check on hardware with a real pointing device (the
   emulator AVD has none; see the v0.5.0 note above).

@@ -14,6 +14,7 @@ import dev.x360reborn.home.TileSize
 import dev.x360reborn.home.Metrics
 import dev.x360reborn.home.Motion
 import dev.x360reborn.home.Nav
+import dev.x360reborn.home.Page
 import dev.x360reborn.home.Search
 import dev.x360reborn.home.SettingsEntry
 import dev.x360reborn.home.Target
@@ -102,11 +103,72 @@ class HubTest {
     }
 
     @Test fun folderMemberTilesCarryFolderIdInStoredOrder() {
-        val hub = HubBuilder.build(apps, emptyList(), emptyList(), settings, folders = folders)
+        val hub = HubBuilder.build(apps, emptyList(), emptyList(), settings, Layout.portrait(1080, 2400), folders = folders)
         val ch = hub.channels.first { it.title == "My Folder" }
-        val tiles = hub.pages[ch.firstPage].tiles
+        // The first member rides the hero slot now; the app tiles keep stored order.
+        val tiles = hub.pages[ch.firstPage].tiles.filter { it.target is Target.App }
         assertEquals(listOf("p2/A", "p1/A"), tiles.map { (it.target as Target.App).key })
         assertTrue(tiles.all { it.folderId == "f1" })
+    }
+
+    // ---- canonical hero (0.6.1) ----------------------------------------------
+
+    /** The hero rect of [page] in layout space, placed the way HomeView places a page. */
+    private fun heroRectOf(layout: Layout, page: Page): Box {
+        val t = page.template
+        val s = t.slots[t.hero]
+        return Box(
+            (layout.w - t.w) / 2f + s.x,
+            layout.panelsY + (layout.panelsH - t.h) / 2f + s.y,
+            s.w, s.h,
+        )
+    }
+
+    @Test fun heroRectIsCanonicalAcrossChannels() {
+        val mixed = (1..30).map { AppInfo("p$it/A", "App %02d".format(it), Category.OTHER) } +
+            gameApps(13) +
+            (1..3).map { AppInfo("v$it/A", "Video $it", Category.VIDEO) } +
+            (1..4).map { AppInfo("m$it/A", "Music $it", Category.MUSIC) }
+        val folder = FolderInfo("f9", "My Folder", listOf("p2/A", "p1/A"))
+        for (size in TileSize.entries) {
+            val layout = Layout.portrait(1080, 2400, size)
+            val hub = HubBuilder.build(mixed, emptyList(), emptyList(), settings, layout, folders = listOf(folder))
+            val rects = listOf("home", "games", "tv & movies", "music", "My Folder").map { title ->
+                val ch = hub.channels.first { it.title == title }
+                heroRectOf(layout, hub.pages[ch.firstPage])
+            }
+            for (r in rects.drop(1)) {
+                assertEquals("hero x at $size", rects[0].x, r.x, 0.01f)
+                assertEquals("hero y at $size", rects[0].y, r.y, 0.01f)
+                assertEquals("hero w at $size", rects[0].w, r.w, 0.01f)
+                assertEquals("hero h at $size", rects[0].h, r.h, 0.01f)
+            }
+            // The shared rect is the layout's canonical hero, at the panels' top.
+            assertEquals(layout.panelsY + layout.heroBox.y, rects[0].y, 0.01f)
+            assertEquals(layout.heroBox.w, rects[0].w, 0.01f)
+            assertEquals(layout.heroBox.h, rects[0].h, 0.01f)
+        }
+    }
+
+    @Test fun canonicalHeroTakesTheBoostedGamesHeight() {
+        // At SMALL the games channel's +1 boost step renders its hero at
+        // 264 * (708/530); the canonical hero is exactly that, at full width.
+        val small = Layout.portrait(1080, 2400, TileSize.SMALL)
+        assertEquals(708f, small.heroBox.w, 0.01f)
+        assertEquals(264f * 708f / 530f, small.heroBox.h, 0.5f)
+        // At LARGE nothing boosts past it: the hero is the portrait template's own.
+        assertEquals(Box(0f, 0f, 352f, 198f), Layout.portrait(1080, 2400, TileSize.LARGE).heroBox)
+    }
+
+    @Test fun appsAndSettingsChannelsStayHeroLess() {
+        val layout = Layout.portrait(1080, 2400, TileSize.SMALL)
+        val hub = HubBuilder.build(apps, emptyList(), emptyList(), settings, layout)
+        for (title in listOf("apps", "settings")) {
+            val ch = hub.channels.first { it.title == title }
+            val page = hub.pages[ch.firstPage]
+            assertEquals(-1, page.template.hero)
+            assertTrue(page.tiles.none { it.kind == Kind.HERO })
+        }
     }
 
     @Test fun folderWithOnlyUninstalledMembersIsDropped() {
@@ -168,7 +230,9 @@ class HubTest {
         val labels = home.tiles.map { it.label }
         assertEquals(listOf("App 01", "App 02", "App 03", "App 04", "App 05", "all apps", "settings"), labels.take(7))
         assertTrue(labels.drop(7).all { it.isEmpty() })
-        assertTrue(home.template.slots[0].h <= Metrics.SMALL_H * 2 + Metrics.GUTTER)
+        // The hero slot is the layout's canonical hero (0.6.1) -- the boosted games
+        // height, taller than the two tile rows the old home banner was capped at.
+        assertEquals(l.heroBox, home.template.slots[home.template.hero])
     }
 
     @Test fun portraitHubKeepsHeroAndShortcuts() {
@@ -399,17 +463,22 @@ class HubTest {
         assertEquals(layout.grid, hub.pages[setCh.firstPage].template)
     }
 
-    @Test fun oneTileFolderBoostsTowardLargeButNotPastIt() {
+    @Test fun folderTilesBoostTowardLargeButNotPastIt() {
         val layout = Layout.portrait(1080, 2400, TileSize.SMALL)
-        val folder = FolderInfo("f1", "Solo", listOf("g1/A"))
-        val hub = HubBuilder.build(gameApps(2), emptyList(), emptyList(), settings, layout, folders = listOf(folder))
+        val folder = FolderInfo("f1", "Solo", listOf("g1/A", "g2/A", "g3/A"))
+        val hub = HubBuilder.build(gameApps(3), emptyList(), emptyList(), settings, layout, folders = listOf(folder))
         val ch = hub.channels.first { it.title == "Solo" }
-        val t = hub.pages[ch.firstPage].template
-        assertTrue(t.slots[0].w > layout.grid.slots[0].w)
-        // Capped at the LARGE geometry: the tile's share of the layout width is
+        val page = hub.pages[ch.firstPage]
+        val t = page.template
+        // The first member is the folder's hero now, on the canonical rect.
+        assertEquals(Kind.HERO, page.tiles[t.hero].kind)
+        assertEquals(layout.heroBox, t.slots[t.hero])
+        // The member tiles still boost past the layout's own grid size...
+        assertTrue(t.slots[1].w > layout.grid.slots[0].w)
+        // ...capped at the LARGE geometry: a tile's share of the layout width is
         // no more than a LARGE tile's share of a LARGE layout's width.
         val large = Layout.portrait(1080, 2400, TileSize.LARGE)
-        assertTrue(t.slots[0].w / layout.w <= large.grid.slots[0].w / large.w + 0.01f)
+        assertTrue(t.slots[1].w / layout.w <= large.grid.slots[0].w / large.w + 0.01f)
         assertTrue(t.h <= layout.panelsH + 0.01f)
     }
 

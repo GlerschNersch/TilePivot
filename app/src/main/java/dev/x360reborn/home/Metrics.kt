@@ -291,6 +291,24 @@ data class Template(
         slots.map { Box(it.x * k, it.y * k, it.w * k, it.h * k) },
         hero, wide, compact,
     )
+
+    /**
+     * This template with its hero slot replaced by [hero] -- the layout's canonical
+     * hero, in page space -- on a page resized to [pageW] x [pageH]: the tile slots
+     * keep their sizes, centred in the new width and shifted so the first row still
+     * starts one gutter under the hero. Slot indices (hero, wide) keep their
+     * meaning. A template with no hero slot is returned unchanged.
+     */
+    fun withHero(hero: Box, pageW: Float, pageH: Float): Template {
+        if (this.hero < 0) return this
+        val old = slots[this.hero]
+        val dx = (pageW - w) / 2f
+        val dy = hero.bottom - old.bottom
+        val moved = slots.mapIndexed { i, b ->
+            if (i == this.hero) hero else Box(b.x + dx, b.y + dy, b.w, b.h)
+        }
+        return Template(pageW, pageH, moved, this.hero, wide, compact)
+    }
 }
 
 /** User-chosen tile size; smaller sizes fit more tiles by enlarging the design space. */
@@ -319,6 +337,15 @@ data class Layout(
     val grid: Template,
     /** The user's tile size this layout was built for; channels may boost past it (below). */
     val size: TileSize = TileSize.LARGE,
+    /**
+     * The one hero rect every hero-bearing channel renders, in first-page template
+     * space (first pages are composited onto it by [Template.withHero]). Portrait
+     * layouts carry the boosted games channel's hero -- full content width at the
+     * +1 boost step's height -- so home no longer shrinks it to a banner and sparse
+     * channels no longer stretch or inset it. Landscape keeps the Template1HD slot,
+     * which every landscape hero already derives from.
+     */
+    val heroBox: Box = Metrics.HOME.slots[Metrics.HOME.hero],
 ) {
     /**
      * The (home, grid) templates a channel renders with at effective size [size]
@@ -328,10 +355,18 @@ data class Layout(
      * height, and never so far that a tile exceeds the share of the screen it
      * would take at LARGE. The page footprint stays inside the layout's panels;
      * only the tiles grow.
+     *
+     * Portrait first pages are then composited onto [heroBox], so a boosted
+     * channel's hero lands on the same rect as every other channel's. Landscape
+     * first pages keep their Template1HD-derived hero: every landscape hero scales
+     * from the same slot together with its page (see RE_NOTES, v0.6.1).
      */
     fun channelTemplates(size: TileSize): Pair<Template, Template> {
         if (size == this.size) return home to grid
-        return if (portrait) portraitChannelTemplates(size) else landscapeChannelTemplates(size)
+        return if (portrait) {
+            val (homeT, gridT) = portraitChannelTemplates(size)
+            homeT.withHero(heroBox, grid.w, panelsH) to gridT
+        } else landscapeChannelTemplates(size)
     }
 
     /** A boosted tile's screen share may not exceed its share at LARGE. */
@@ -383,6 +418,21 @@ data class Layout(
         private const val PORTRAIT_BOTTOM = 30f
 
         /**
+         * The canonical portrait hero height for a layout of tile size [size] and
+         * design width [layoutW]: the hero height of the games channel's +1 boost
+         * step (the 7-18 tile band) -- the height that channel's hero already
+         * renders at -- or the size's own hero height at LARGE, past which nothing
+         * boosts. Mirrors the scale [Layout.portraitChannelTemplates] applies.
+         */
+        private fun portraitHeroH(size: TileSize, layoutW: Float): Float {
+            if (size == TileSize.LARGE) return Metrics.heroHeight(TileSize.LARGE.portraitCols)
+            val effCols = size.larger().portraitCols
+            val capK = layoutW / (Metrics.gridW(TileSize.LARGE.portraitCols) + 2 * PORTRAIT_MARGIN)
+            val k = min(Metrics.gridW(size.portraitCols) / Metrics.gridW(effCols), capK)
+            return Metrics.heroHeight(effCols) * k
+        }
+
+        /**
          * Phone portrait: the design space is just wide enough for [TileSize.portraitCols] tiles, so
          * fewer columns means bigger tiles. Rows fill the height; the twist + panels block is centred.
          */
@@ -391,16 +441,17 @@ data class Layout(
             val w = Metrics.gridW(cols) + 2 * PORTRAIT_MARGIN
             val h = w * viewH / viewW
             val avail = h - PORTRAIT_TOP - TWIST_TO_PANELS - PORTRAIT_BOTTOM
-            val heroH = Metrics.heroHeight(cols)
+            val heroH = portraitHeroH(size, w)
             val homeRows = max(1, floor((avail - heroH) / (Metrics.SMALL_H + Metrics.GUTTER)).toInt())
             val gridRows = max(1, floor((avail + Metrics.GUTTER) / (Metrics.SMALL_H + Metrics.GUTTER)).toInt())
-            val home = Metrics.portraitHome(cols, homeRows)
+            val heroBox = Box(0f, 0f, Metrics.gridW(cols), heroH)
             val grid = Metrics.grid(cols, gridRows, rowMajor = true)
-            val panelsH = max(home.h, grid.h)
+            val panelsH = max(heroH + Metrics.GUTTER + Metrics.gridH(homeRows), grid.h)
+            val home = Metrics.portraitHome(cols, homeRows).withHero(heroBox, Metrics.gridW(cols), panelsH)
             val top = max(PORTRAIT_TOP, (h - TWIST_TO_PANELS - panelsH) / 2f)
             return Layout(
                 w, h, true, top + TWIST_TO_PANELS, panelsH, PORTRAIT_MARGIN, top,
-                w - PORTRAIT_MARGIN, 40f, home, grid, size,
+                w - PORTRAIT_MARGIN, 40f, home, grid, size, heroBox,
             )
         }
 

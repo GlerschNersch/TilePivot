@@ -737,10 +737,15 @@ class HomeView(
         val win = Metrics.coverSrc(soft.width.toFloat(), soft.height.toFloat(), b.w, b.h)
         srcRect.set(win.left.roundToInt(), win.top.roundToInt(), win.right.roundToInt(), win.bottom.roundToInt())
         iconRect.set(0f, 0f, b.w, b.h)
+        // The wash never leaves the panel: clip bitmap and scrim to the hero rect,
+        // exact even while the tile's focus/cascade transform is live.
+        canvas.save()
+        canvas.clipRect(rect)
         canvas.drawBitmap(soft, srcRect, iconRect, bmpPaint)
         // ~60% black scrim: the ambience glows, the name and sub stay legible.
         fill.color = AMBIENCE_SCRIM
         canvas.drawRect(rect, fill)
+        canvas.restore()
     }
 
     /** The tile's glyph drawn on its themed body, for tiles with no bitmap art. */
