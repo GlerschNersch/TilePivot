@@ -451,6 +451,104 @@ folder tests reworked for hero-bearing folder pages.
   still reads the shared game folders directly and needs it. Removing it
   belongs to the later SAF (folder-picker) migration chunk, not this rename.
 
+## App v0.8.0 (2026-11-06): picked-folder game library, no permissions
+
+TilePivot now reads Xbox 360 games only from folders the user picks through the Storage
+Access Framework. MANAGE_EXTERNAL_STORAGE is gone; the app declares no permissions at all
+(`aapt dump permissions` on the release APK lists none).
+
+### SAF design
+
+- **Library.** Settings › "xbox 360 games" opens a manager dialog: the picked folders (by
+  host path, or folder name when there is none), Add folder, Re-scan, and tap-a-folder to
+  Remove. Add fires ACTION_OPEN_DOCUMENT_TREE with read + persistable flags and calls
+  `takePersistableUriPermission(READ)`; Remove releases the grant. Multiple folders are
+  fine; duplicates are ignored (`PickedFolders`, unit-tested).
+- **Storage of the grants.** Tree URIs live in their own prefs file, `game_library`, not
+  in `hub`, so the settings backup export (which serialises `hub`) never contains them: a
+  grant is local to one install on one device. `res/xml/data_extraction_rules.xml` also
+  keeps the file out of Android cloud backup and device transfer.
+- **Scanner.** `GameScanner` now walks `ScanNode` trees. Production nodes are `DocNode`s:
+  one ContentResolver children query per folder (id, name, MIME, size), cached for the
+  scan; bytes come from `openInputStream`. Tests walk temp dirs through a java.io
+  `FileNode`, so every rule stays JVM-tested. Semantics are unchanged but relative to
+  each picked root: files up to two levels down, folders at depth two or less checked for
+  default.xex, hidden entries skipped, ISO/ZAR under 1 KiB skipped (a provider that
+  reports no size skips that floor), STFS by LIVE/CON/PIRS magic read from a stream.
+  One 0x971A-byte header read per package serves both the title (0x411, 9 x 0x200
+  slots) and the thumbnail check. Dedupe is by provider + document id, so overlapping
+  picked trees don't double a game.
+- **Cover art** keeps the name-major / directory-major convention (`resolveArt`, now
+  generic over the folder type), resolved inside the tree: ISO/ZAR beside the file;
+  folder games inside, then beside; STFS beside the package, then one folder up, but
+  never above the picked root (the grant ends there). `Covers` decodes sidecars and
+  header thumbnails through content streams. (The emulator pass caught a regression
+  here before commit: the bounds-only `decodeStream` pass always returns null, and an
+  early `?: return null` on it dropped every sidecar cover.)
+- **Failure behaviour.** A revoked grant, unmounted card or deleted folder makes listing
+  return nothing (SecurityException etc. are caught per query); the channel simply
+  loses those games. The manager marks such a folder "unavailable" (grant missing from
+  `persistedUriPermissions`, or the root document no longer resolves to a directory).
+  The game cache now also rescans when the set of picked folders changes.
+
+### Host-path mapping (`HostPaths`, pure, unit-tested)
+
+Xendroid+'s launch contract is unchanged (action `xendroid.intent.action.xendroid`,
+package `xendroid.compose.fork` then `xendroid.compose`, extras `game_uri` = absolute
+path and `game_name` only), so each game's document URI is mapped to a path:
+
+- `com.android.externalstorage.documents` ids `primary:<rel>` -> primary volume
+  directory + rel; `<uuid>:<rel>` (SD card / USB) -> that volume's directory, taken from
+  `StorageManager.getStorageVolumes()` (uuid matched case-insensitively).
+- `raw:<abs path>` ids (any provider) -> the path itself, when absolute.
+- Everything else is null: Downloads-provider `msf:` / numeric ids, media-store ids,
+  cloud providers, volumes not currently mounted, malformed URIs, any `..` segment.
+- Limits: the mapping relies on the AOSP external-storage provider's id convention, not
+  an API guarantee; a provider using another scheme maps to null (safe, never a wrong
+  path). Xendroid+ still needs its own access to that path; TilePivot can't grant it.
+
+When a game has no host path its tile still shows with title and art, but launching
+opens "Can't open this game", explaining that Xendroid+ needs a direct file path and
+this folder type can't provide one. No intent is fired.
+
+### Migration
+
+Nothing is auto-migrated. Existing installs show the games channel with Android games
+only, and the settings row reads "xbox 360 games: pick a games folder" until the user
+picks their game folder once. The old fixed roots (/sdcard/Xbox360, /sdcard/ROMs/xbox360,
+/sdcard/Games/Xbox360) are no longer scanned; picking one of them brings its games back.
+On update, Android drops the old all-files grant along with the permission.
+
+### Removed
+
+- MANAGE_EXTERNAL_STORAGE, the all-files settings flow (the
+  ACTION_MANAGE_APP_ALL_FILES_ACCESS intents), the onResume grant re-check, and the
+  "grant folder access" row.
+- The missing-emulator dialog's "Get Xendroid+" button and its GitHub releases URL. The
+  dialog now says Xendroid+ is a separate emulator app the user gets and installs
+  themselves, with a single OK.
+
+### Verification
+
+- Unit tests: 94 in each variant (78 baseline + 16 new: HostPathsTest 7, GamesTest 9),
+  all passing, counted from the test-results XML after `--rerun-tasks`.
+- Release APK + AAB built; badging dev.tilepivot / TilePivot / 0.8.0 (17); no
+  permissions; lintRelease 0 errors.
+- Emulator (Medium_Phone_API_36.1), live: seeded /sdcard/XboxGames (an ISO with a name
+  sidecar, a LIVE package in a title-id folder with a header title and PNG thumbnail, a
+  default.xex folder with boxart.png, plus a tiny ISO and a hidden ISO), picked through
+  DocumentsUI by adb input (storage root correctly refused, folder allowed). Result: "3
+  found"; the games channel shows Apex Velocity (header title + thumbnail), Folder Quest
+  and Test Racer with their sidecar art, and survives force-stop (grant persisted). The
+  manager lists `/storage/emulated/0/XboxGames` (the mapping, live, on the picked tree
+  URI). Launch reaches the Xendroid+ not-installed dialog (Xendroid+ is arm64-only; no
+  boot on the x86_64 AVD). Moving the folder away: marked unavailable, re-scan finds 0,
+  no crash; moving it back and re-scanning finds 3. Remove returns the row to "pick a
+  games folder".
+- Not verified live: the Xendroid+ intent itself and its `game_uri` value (no Xendroid+
+  on the emulator), SD-card and raw: mappings, and the unmappable-folder dialog; these
+  rest on unit tests and code review.
+
 ## Next
 - Hover chrome: first live visual check on hardware with a real pointing device (the
   emulator AVD has none; see the v0.5.0 note above).

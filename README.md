@@ -33,7 +33,7 @@ install over a build you made yourself with the debug key; uninstall that one fi
 - Screen-reader support: TalkBack reads every tile and channel, double-tap launches, double-tap-and-hold opens a tile's options, and a two-finger swipe pages the hub
 - Settings backup: "back up settings" in the settings channel saves pins, folders, recents, theme and layout to a file; "restore settings" brings them back (for example when switching between a self-built copy and a release, which needs an uninstall)
 - Work-profile apps are listed alongside personal ones with their briefcase badge, and launch and app-info act on the right profile; Android 15 Private Space apps stay hidden
-- Xbox 360 games via Xendroid+: your own game dumps (ISO, ZAR, Games on Demand/XBLA containers, or folders containing default.xex) placed in an `Xbox360` folder (`/sdcard/Xbox360`, `/sdcard/ROMs/xbox360`, or `/sdcard/Games/Xbox360`) appear in the games channel and launch straight into the Xendroid+ emulator. Requires Xendroid+ installed, plus all-files access granted from the settings channel ("xbox 360 games: grant folder access")
+- Xbox 360 games via Xendroid+: your own game dumps (ISO, ZAR, Games on Demand/XBLA containers, or folders containing default.xex) in a folder you pick once from the settings channel ("xbox 360 games: pick a games folder"; several folders are fine) appear in the games channel and launch straight into the Xendroid+ emulator. TilePivot asks for no permissions: it only gets read access to the folders you pick. Xendroid+ is a separate app you install yourself, and it needs a real file path, so pick folders from device storage or an SD card (Downloads-provider and cloud folders show their games but cannot launch them)
 
 ## Build
 

@@ -11,8 +11,8 @@ android {
         applicationId = "dev.tilepivot"
         minSdk = 33
         targetSdk = 36
-        versionCode = 16
-        versionName = "0.7.0"
+        versionCode = 17
+        versionName = "0.8.0"
     }
 
     // Release signing comes from ~/.gradle/gradle.properties (never the repo): REBORN_KEYSTORE,
