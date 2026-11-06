@@ -289,6 +289,31 @@ thumbnails. 0.6.0 completes the convention (`GameScanner.artCandidates` /
   a third. Decoding stays in `Covers`: off-thread, subsampled toward the
   largest drawn edge, 24 MB LRU; any failure leaves the drawn gamepad glyph.
 
+### Sparse channels get bigger tiles
+
+Tile geometry used to be uniform, so the 13-tile games channel filled
+three quarters of the panel at Medium (and under half at Small on the
+phone). Now a content channel (games / tv & movies / music) or a folder
+channel renders at an EFFECTIVE size stepped up from the user's setting by
+tile count (`Metrics.boostStepsFor` / `effectiveSize`): 1-6 tiles boost two
+steps, 7-18 one step, 19+ none -- capped at LARGE, so a sparse channel at
+LARGE is unchanged and a 1-tile folder tops out at hero scale, not beyond.
+Home, apps and settings always use the layout's own templates.
+
+`Layout.channelTemplates(size)` builds the boosted templates: the bigger
+size's templates scaled so the tiles grow but the page stays inside the
+panel -- rows are added until the next would overflow the panel height,
+and the scale is capped so a tile never takes more of the screen than it
+would at LARGE. Focus geometry, the entry cascade's row/column delays and
+hit-testing all read the page's own template, so they follow for free.
+
+Emulator proof (1080x2400, Medium, the seeded 13 games): panel fill went
+74.9% -> 98.9% (pixel-measured), spilling 4 games to a second page. The
+dense apps channel is pixel-identical to 0.5.4 (0 differing pixels outside
+the clock; a first-boot icon-raster wobble on sideloaded test apps was
+chased down and reproduced with a pristine 0.5.4 build, so it is the AVD,
+not the change).
+
 ## Next
 - Hover chrome: first live visual check on hardware with a real pointing device (the
   emulator AVD has none; see the v0.5.0 note above).

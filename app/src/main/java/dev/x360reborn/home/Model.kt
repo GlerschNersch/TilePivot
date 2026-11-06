@@ -150,9 +150,13 @@ object HubBuilder {
                 })
                 in folderByChannel -> {
                     val f = folderByChannel.getValue(i)
-                    pages += gridPages(layout.grid, i, f.members.map { appTile(byKey.getValue(it), f.id) })
+                    val (_, grid) = channelTemplates(layout, f.members.size)
+                    pages += gridPages(grid, i, f.members.map { appTile(byKey.getValue(it), f.id) })
                 }
-                else -> pages += contentPages(layout, i, content[i])
+                else -> {
+                    val (home, grid) = channelTemplates(layout, content[i].size)
+                    pages += contentPages(home, grid, i, content[i])
+                }
             }
             channels += Channel(title, start, pages.size - start)
         }
@@ -197,13 +201,20 @@ object HubBuilder {
         return Page(0, t, tiles.toList().filterNotNullPreservingSlots())
     }
 
-    private fun contentPages(layout: Layout, channel: Int, tiles: List<Tile>): List<Page> {
-        val t = layout.home
-        val first = arrayOfNulls<Tile>(t.slots.size)
-        val used = fillTiles(t, first, tiles)
-        val page = Page(channel, t, first.toList().filterNotNullPreservingSlots())
-        return listOf(page) + gridPages(layout.grid, channel, tiles.drop(used), allowEmpty = false)
+    private fun contentPages(home: Template, grid: Template, channel: Int, tiles: List<Tile>): List<Page> {
+        val first = arrayOfNulls<Tile>(home.slots.size)
+        val used = fillTiles(home, first, tiles)
+        val page = Page(channel, home, first.toList().filterNotNullPreservingSlots())
+        return listOf(page) + gridPages(grid, channel, tiles.drop(used), allowEmpty = false)
     }
+
+    /**
+     * Templates for a content or folder channel: a sparse channel renders at a
+     * boosted effective size (see [Metrics.effectiveSize]); home, apps and
+     * settings always use the layout's own templates.
+     */
+    private fun channelTemplates(layout: Layout, tileCount: Int): Pair<Template, Template> =
+        layout.channelTemplates(Metrics.effectiveSize(layout.size, tileCount))
 
     /** Hero slot takes the first tile (promoted to HERO), the open slots take the rest in reading order. */
     private fun fillTiles(t: Template, tiles: Array<Tile?>, items: List<Tile>): Int {

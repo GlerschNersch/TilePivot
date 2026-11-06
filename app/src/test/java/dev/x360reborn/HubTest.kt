@@ -347,6 +347,72 @@ class HubTest {
         assertEquals(Metrics.FLASH_PEAK, Motion.flash(Metrics.FLASH_PEAK_AT, true), 1e-5f)
     }
 
+    // ---- sparse-channel boost ---------------------------------------------------
+
+    private fun gameApps(n: Int) = (1..n).map { AppInfo("g$it/A", "Game %02d".format(it), Category.GAME) }
+
+    @Test fun boostStepsFollowTheCountBands() {
+        assertEquals(2, Metrics.boostStepsFor(1))
+        assertEquals(2, Metrics.boostStepsFor(6))
+        assertEquals(1, Metrics.boostStepsFor(7))
+        assertEquals(1, Metrics.boostStepsFor(18))
+        assertEquals(0, Metrics.boostStepsFor(19))
+        assertEquals(0, Metrics.boostStepsFor(60))
+    }
+
+    @Test fun effectiveSizeStepsUpButNeverPastLarge() {
+        assertEquals(TileSize.LARGE, Metrics.effectiveSize(TileSize.SMALL, 4))
+        assertEquals(TileSize.MEDIUM, Metrics.effectiveSize(TileSize.SMALL, 13))
+        assertEquals(TileSize.LARGE, Metrics.effectiveSize(TileSize.MEDIUM, 13))
+        assertEquals(TileSize.LARGE, Metrics.effectiveSize(TileSize.LARGE, 1))
+        assertEquals(TileSize.MEDIUM, Metrics.effectiveSize(TileSize.MEDIUM, 40))
+    }
+
+    @Test fun sparseGamesChannelFillsThePanelAtMedium() {
+        val layout = Layout.portrait(1080, 2400, TileSize.MEDIUM)
+        val hub = HubBuilder.build(gameApps(13), emptyList(), emptyList(), settings, layout)
+        val ch = hub.channels.first { it.title == "games" }
+        val first = hub.pages[ch.firstPage]
+        // Boosted tiles are bigger than the layout's own small tiles...
+        assertTrue(first.template.slots[2].w > layout.home.slots[2].w)
+        // ...the boosted template still fits the panel height...
+        assertTrue(first.template.h <= layout.panelsH + 0.01f)
+        // ...and the 13 tiles' first page fills at least 75% of the panel height.
+        val usedBottom = first.template.slots.filterIndexed { i, _ -> first.focusable(i) }.maxOf { it.bottom }
+        assertTrue("fill ${usedBottom / layout.panelsH}", usedBottom / layout.panelsH >= 0.75f)
+    }
+
+    @Test fun denseGamesChannelKeepsTheLayoutTemplates() {
+        val layout = Layout.portrait(1080, 2400, TileSize.MEDIUM)
+        val hub = HubBuilder.build(gameApps(30), emptyList(), emptyList(), settings, layout)
+        val ch = hub.channels.first { it.title == "games" }
+        assertEquals(layout.home, hub.pages[ch.firstPage].template)
+        assertEquals(layout.grid, hub.pages[ch.firstPage + 1].template)
+    }
+
+    @Test fun appsAndSettingsChannelsAreNeverBoosted() {
+        val layout = Layout.portrait(1080, 2400, TileSize.SMALL)
+        val hub = HubBuilder.build(gameApps(2), emptyList(), emptyList(), settings, layout)
+        val appsCh = hub.channels.first { it.title == "apps" }
+        assertEquals(layout.grid, hub.pages[appsCh.firstPage].template)
+        val setCh = hub.channels.first { it.title == "settings" }
+        assertEquals(layout.grid, hub.pages[setCh.firstPage].template)
+    }
+
+    @Test fun oneTileFolderBoostsTowardLargeButNotPastIt() {
+        val layout = Layout.portrait(1080, 2400, TileSize.SMALL)
+        val folder = FolderInfo("f1", "Solo", listOf("g1/A"))
+        val hub = HubBuilder.build(gameApps(2), emptyList(), emptyList(), settings, layout, folders = listOf(folder))
+        val ch = hub.channels.first { it.title == "Solo" }
+        val t = hub.pages[ch.firstPage].template
+        assertTrue(t.slots[0].w > layout.grid.slots[0].w)
+        // Capped at the LARGE geometry: the tile's share of the layout width is
+        // no more than a LARGE tile's share of a LARGE layout's width.
+        val large = Layout.portrait(1080, 2400, TileSize.LARGE)
+        assertTrue(t.slots[0].w / layout.w <= large.grid.slots[0].w / large.w + 0.01f)
+        assertTrue(t.h <= layout.panelsH + 0.01f)
+    }
+
     @Test fun cascadeDelayRunsDiagonallyFromTopLeft() {
         assertEquals(0f, Anim.delayFor(0, 0), 0f)
         // The wave is diagonal: a step right costs the same as a step down.

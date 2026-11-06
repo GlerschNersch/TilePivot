@@ -238,6 +238,24 @@ object Metrics {
     const val HOVER_SIZE_PORTRAIT = 48f
     const val HOVER_Y_PORTRAIT = 8f
 
+    // Sparse-channel boost: a channel with little in it renders at a larger
+    // effective tile size, so a handful of games is not lost in a page built
+    // for thirty apps. The boost steps the user's size up toward LARGE by
+    // bands of tile count, never past it; dense channels are untouched.
+    /** Boost steps (toward larger tiles) for a channel holding [tileCount] tiles. */
+    fun boostStepsFor(tileCount: Int): Int = when {
+        tileCount <= 6 -> 2
+        tileCount <= 18 -> 1
+        else -> 0
+    }
+
+    /** The size a channel with [tileCount] tiles renders at, given the user's [user] size. */
+    fun effectiveSize(user: TileSize, tileCount: Int): TileSize {
+        var size = user
+        repeat(boostStepsFor(tileCount)) { size = size.larger() }
+        return size
+    }
+
     /** The three hover-chrome boxes in order: back, home, search. */
     fun hoverChromeBoxes(w: Float, portrait: Boolean, twistX: Float): List<Box> {
         if (portrait) {
@@ -266,7 +284,14 @@ data class Template(
     val wide: List<Int> = emptyList(),
     /** Uniform cells: shortcuts move up to follow the last app instead of leaving a gap. */
     val compact: Boolean = false,
-)
+) {
+    /** Every box (and the page size) scaled by [k]; slot indices keep their meaning. */
+    fun scaled(k: Float): Template = Template(
+        w * k, h * k,
+        slots.map { Box(it.x * k, it.y * k, it.w * k, it.h * k) },
+        hero, wide, compact,
+    )
+}
 
 /** User-chosen tile size; smaller sizes fit more tiles by enlarging the design space. */
 enum class TileSize(val label: String, val portraitCols: Int, val landscapeZoom: Float) {
@@ -292,7 +317,58 @@ data class Layout(
     val clockY: Float,
     val home: Template,
     val grid: Template,
+    /** The user's tile size this layout was built for; channels may boost past it (below). */
+    val size: TileSize = TileSize.LARGE,
 ) {
+    /**
+     * The (home, grid) templates a channel renders with at effective size [size]
+     * inside this layout: this layout's own templates when [size] is its size
+     * (the dense path, pixel-identical to before the boost existed). Otherwise
+     * templates for the bigger size, scaled up -- as many rows as fit the panel
+     * height, and never so far that a tile exceeds the share of the screen it
+     * would take at LARGE. The page footprint stays inside the layout's panels;
+     * only the tiles grow.
+     */
+    fun channelTemplates(size: TileSize): Pair<Template, Template> {
+        if (size == this.size) return home to grid
+        return if (portrait) portraitChannelTemplates(size) else landscapeChannelTemplates(size)
+    }
+
+    /** A boosted tile's screen share may not exceed its share at LARGE. */
+    private fun boostCapK(): Float {
+        val largeW = if (portrait) Metrics.gridW(TileSize.LARGE.portraitCols) + 2 * PORTRAIT_MARGIN
+            else max(Metrics.DESIGN_W, Metrics.DESIGN_H * w / h)
+        return w / largeW
+    }
+
+    private fun portraitChannelTemplates(size: TileSize): Pair<Template, Template> {
+        val cols = size.portraitCols
+        val k = min(Metrics.gridW(cols).let { grid.w / it }, boostCapK())
+        val homeRows = fitRows(k) { Metrics.portraitHome(cols, it).h }
+        val gridRows = fitRows(k) { Metrics.grid(cols, it, rowMajor = true).h }
+        return Metrics.portraitHome(cols, homeRows).scaled(k) to
+            Metrics.grid(cols, gridRows, rowMajor = true).scaled(k)
+    }
+
+    private fun landscapeChannelTemplates(size: TileSize): Pair<Template, Template> {
+        val steps = this.size.ordinal - size.ordinal
+        val baseCols = grid.slots.map { it.x }.distinct().size
+        val cols = max(3, baseCols - 2 * steps)
+        val k = min(grid.w / Metrics.gridW(cols), boostCapK())
+        val gridRows = fitRows(k) { Metrics.grid(cols, it).h }
+        val baseExtra = ((home.w - Metrics.HOME.w) / (Metrics.SMALL_W + Metrics.GUTTER)).roundToInt()
+        val homeRaw = Metrics.landscapeHome(max(0, baseExtra - 2 * steps))
+        val kh = min(home.w / homeRaw.w, min(panelsH / homeRaw.h, min(w / homeRaw.w, boostCapK())))
+        return homeRaw.scaled(kh) to Metrics.grid(cols, gridRows).scaled(k)
+    }
+
+    /** Most rows whose template, scaled by [k], still fits [panelsH]; at least one. */
+    private fun fitRows(k: Float, height: (Int) -> Float): Int {
+        var rows = 1
+        while (rows < 24 && height(rows + 1) * k <= panelsH) rows++
+        return rows
+    }
+
     companion object {
         /** The dash's own 1280x720 placement (HubSceneStandard). */
         val LANDSCAPE = Layout(
@@ -324,7 +400,7 @@ data class Layout(
             val top = max(PORTRAIT_TOP, (h - TWIST_TO_PANELS - panelsH) / 2f)
             return Layout(
                 w, h, true, top + TWIST_TO_PANELS, panelsH, PORTRAIT_MARGIN, top,
-                w - PORTRAIT_MARGIN, 40f, home, grid,
+                w - PORTRAIT_MARGIN, 40f, home, grid, size,
             )
         }
 
@@ -343,7 +419,7 @@ data class Layout(
             val homeExtra = floor((usable - Metrics.HOME.w) / (Metrics.SMALL_W + Metrics.GUTTER)).toInt()
             return Layout(
                 w, h, false, Metrics.PANELS_Y, panelsH, Metrics.TWIST_X, Metrics.TWIST_Y,
-                w - 98f, 72f, Metrics.landscapeHome(homeExtra), Metrics.grid(cols, rows),
+                w - 98f, 72f, Metrics.landscapeHome(homeExtra), Metrics.grid(cols, rows), size,
             )
         }
 
