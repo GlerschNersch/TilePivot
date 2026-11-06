@@ -60,11 +60,13 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        apps = Apps(this)
-        games = Games(this)
+        apps = Apps(this) { main.post { view.invalidate() } }
+        games = Games()
+        hadAccess = games.hasAccess()
         // The theme must be active before the view caches its first colours.
         Themes.active = Themes.byId(apps.themeId)
         view = HomeView(this, ::launch, ::options, apps::icon, apps::badge, { reload() }, ::tileSizeChosen, ::openSearch)
+        view.heroIconFor = apps::heroIcon
         view.tileSize = apps.tileSize
         view.bgStyle = apps.bgStyle
         view.clock24h = apps.clock24h
@@ -88,38 +90,78 @@ class MainActivity : Activity() {
         if (leftForApp) {
             leftForApp = false
             view.play(Trans.BACK_TO)
+        } else {
+            view.reveal() // never resume onto a hub that is still hidden
+        }
+        // Back from the all-files access screen (or access revoked meanwhile): rescan.
+        val access = games.hasAccess()
+        if (access != hadAccess) {
+            hadAccess = access
+            reload(rescanGames = true)
         }
     }
+
+    /** All-files access as of the last check, so onResume notices a grant. */
+    private var hadAccess = false
 
     /** Set when we hand off to another activity, so onResume knows to play the return transition. */
     private var leftForApp = false
 
+    /**
+     * The hub hides itself (TransFrom) before an activity starts. Normally we pause and
+     * onResume brings it back; but in split-screen / freeform the launched app can open in
+     * another window without pausing us, which left the hub blank and deaf to input. If we
+     * are still resumed this long after a hand-off, the hub comes back on its own.
+     */
+    private val stillHere = Runnable {
+        if (leftForApp) {
+            leftForApp = false
+            view.reveal()
+        }
+    }
+
+    /** We just started another activity: arm the return transition and the stuck-hub guard. */
+    private fun handedOff() {
+        leftForApp = true
+        main.removeCallbacks(stillHere)
+        main.postDelayed(stillHere, HANDOFF_GUARD_MS)
+    }
+
     override fun onPause() {
         main.removeCallbacks(clock)
+        main.removeCallbacks(stillHere)
         super.onPause()
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        // Home pressed while already home: jump back to the home channel.
-        if (Intent.ACTION_MAIN == intent.action && intent.hasCategory(Intent.CATEGORY_HOME)) view.back()
+        // Home pressed while already home: jump back to the home channel (and un-hide the hub).
+        if (Intent.ACTION_MAIN == intent.action && intent.hasCategory(Intent.CATEGORY_HOME)) {
+            view.reveal()
+            view.back()
+        }
     }
 
     override fun onDestroy() {
         launcherApps.unregisterCallback(appsChanged)
+        main.removeCallbacksAndMessages(null)
         loader.shutdownNow()
+        apps.close()
         super.onDestroy()
     }
 
     /** The app list from the latest load; the search dialog filters this. */
     @Volatile private var appList: List<AppInfo> = emptyList()
 
-    private fun reload() {
+    /** Rebuilds the hub off the main thread. Game folders are only re-walked when [rescanGames]. */
+    private fun reload(rescanGames: Boolean = false) {
         val layout = view.wanted
+        val (gridPx, heroPx) = view.iconPxFor(layout)
         loader.execute {
             val list = apps.load()
             appList = list
-            val gameList = games.load()
+            // The game list is cached (see Games): most rebuilds don't touch the folders.
+            val gameList = games.load(force = rescanGames)
             val hub = HubBuilder.build(
                 list, apps.recent(), apps.pins(),
                 apps.settingsEntries(games.hasAccess(), games.found),
@@ -128,9 +170,12 @@ class MainActivity : Activity() {
             )
             // A rotation may have queued a newer build; only the latest layout wins.
             main.post { if (view.wanted == layout) view.setHub(hub) }
-            // Home-page icons first, so the visible tiles fill in before the long lists.
+            // A frame shows at most three pages (two mid-swipe, plus letterbox edges in landscape).
+            apps.fitIconCache(3 * maxOf(layout.grid.slots.size, layout.home.slots.size), gridPx, heroPx)
+            // Home-page icons first, so the visible tiles fill in, then the rest in page order.
             val visible = hub.pages[0].tiles.mapNotNull { it.iconKey }
-            apps.loadIcons(visible) { main.post { view.invalidate() } }
+            val later = hub.pages.drop(1).flatMap { p -> p.tiles.mapNotNull { it.iconKey } }
+            apps.loadIcons(visible, later) { main.post { view.invalidate() } }
         }
     }
 
@@ -175,13 +220,20 @@ class MainActivity : Activity() {
     private fun launch(tile: Tile, bounds: android.graphics.Rect) {
         when (val t = tile.target) {
             is Target.App -> {
-                val cn = apps.component(t.key) ?: return
-                val user = apps.user(t.key) ?: return
+                // The hub is already hidden (TransFrom), so every early exit must bring it back.
+                val cn = apps.component(t.key)
+                val user = apps.user(t.key)
+                if (cn == null || user == null) {
+                    view.play(Trans.TO)
+                    Toast.makeText(this, "${tile.label} is no longer installed", Toast.LENGTH_SHORT).show()
+                    reload()
+                    return
+                }
                 try {
                     // The hub is already zooming away (TransFrom), so the app just fades in over it.
                     val opts = ActivityOptions.makeCustomAnimation(this, android.R.anim.fade_in, 0)
                     launcherApps.startMainActivity(cn, user, bounds, opts.toBundle())
-                    leftForApp = true
+                    handedOff()
                     apps.markLaunched(t.key)
                     // Rebuild after the app is up, so "recent" reorders while the hub is hidden.
                     main.postDelayed(::reload, 800)
@@ -218,7 +270,7 @@ class MainActivity : Activity() {
             } else try {
                 startActivity(Intent(t.name).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
                     ActivityOptions.makeCustomAnimation(this, android.R.anim.fade_in, 0).toBundle())
-                leftForApp = true
+                handedOff()
             } catch (e: ActivityNotFoundException) {
                 view.play(Trans.TO)
                 Toast.makeText(this, "Not available on this device", Toast.LENGTH_SHORT).show()
@@ -260,7 +312,7 @@ class MainActivity : Activity() {
                 .putExtra("game_uri", path)
                 .putExtra("game_name", tile.label)
             startActivity(intent, ActivityOptions.makeCustomAnimation(this, android.R.anim.fade_in, 0).toBundle())
-            leftForApp = true
+            handedOff()
         } catch (e: Exception) {
             Log.w(TAG, "xendroid launch failed: $path", e)
             view.play(Trans.TO)
@@ -271,8 +323,12 @@ class MainActivity : Activity() {
     /** Settings-channel Xbox entry: grant all-files access when missing, otherwise re-scan. */
     private fun xboxAction() {
         if (games.hasAccess()) {
-            reload()
-            Toast.makeText(this, "${games.found} Xbox 360 games found", Toast.LENGTH_SHORT).show()
+            reload(rescanGames = true)
+            // The loader is single-threaded, so this runs after the rescan: report its count.
+            loader.execute {
+                val n = games.found
+                main.post { Toast.makeText(this, "$n Xbox 360 games found", Toast.LENGTH_SHORT).show() }
+            }
             return
         }
         try {
@@ -281,9 +337,14 @@ class MainActivity : Activity() {
                 Uri.fromParts("package", packageName, null),
             ))
         } catch (e: ActivityNotFoundException) {
-            startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+            try {
+                startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+            } catch (e2: ActivityNotFoundException) {
+                Toast.makeText(this, "Not available on this device", Toast.LENGTH_SHORT).show()
+                return
+            }
         }
-        leftForApp = true
+        handedOff()
     }
 
     /** Search dialog: a text field over a live-filtered list of apps; tapping one launches it. */
@@ -434,6 +495,8 @@ class MainActivity : Activity() {
 
     private companion object {
         const val TAG = "X360Reborn"
+        /** How long a hand-off may leave us resumed (no onPause) before the hub reappears. */
+        const val HANDOFF_GUARD_MS = 2_000L
         /** Xendroid+'s emulator launch action (EmulatorHostActivity). */
         const val ACTION_XENDROID = "xendroid.intent.action.xendroid"
         /** Release builds install as .fork; the plain package is the suffix-overridden build. */

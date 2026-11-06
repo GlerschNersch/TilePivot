@@ -23,14 +23,41 @@ import dev.x360reborn.home.Glyph
 import dev.x360reborn.home.TileSize
 import dev.x360reborn.home.Themes
 import dev.x360reborn.home.SettingsEntry
+import android.util.LruCache
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 
 /** Installed apps, their icons, and the launcher's own recents/pins (kept in prefs, no usage-stats permission). */
-class Apps(private val context: Context) {
+class Apps(
+    private val context: Context,
+    /** An icon that missed the cache has finished rendering (called off the main thread). */
+    private val onIconReady: () -> Unit = {},
+) {
     private val launcherApps = context.getSystemService(LauncherApps::class.java)
     private val users = context.getSystemService(UserManager::class.java)
     private val prefs = context.getSharedPreferences("hub", Context.MODE_PRIVATE)
-    private val icons = ConcurrentHashMap<String, Bitmap>()
+    /** Icon raster edge in px; follows the on-screen tile size once [fitIconCache] knows it. */
+    @Volatile private var px = defaultIconPx()
+    /**
+     * Rendered icons, bounded by bytes. Icons are up to 448 px square (~0.8 MB each, in
+     * native memory), so caching every installed app grew without limit: ~300 MB for the
+     * 388 launchable activities on Matt's phone. The budget is sized by [fitIconCache] to
+     * the most tiles one frame can draw, so the screen never thrashes it; anything evicted
+     * re-renders on demand.
+     */
+    private val icons = object : LruCache<String, Bitmap>(MIN_ICONS * iconKb()) {
+        override fun sizeOf(key: String, value: Bitmap) = value.allocationByteCount / 1024
+    }
+    /**
+     * The hero draws one icon much larger than the grid does (~400 px vs ~280 px at small
+     * tiles), so it gets its own few full-size rasters instead of sizing every icon for it.
+     */
+    @Volatile private var heroPx = px
+    private val heroIcons = LruCache<String, Bitmap>(HERO_ICONS)
+    /** Keys queued for an on-demand render, so a missed icon is only rendered once. */
+    private val pending = ConcurrentHashMap.newKeySet<String>()
+    private val iconWorker = Executors.newSingleThreadExecutor()
     /** Work-profile badge art per key, kept apart from the icons (see renderBadge). */
     private val badges = ConcurrentHashMap<String, Bitmap>()
     @Volatile private var activities: Map<String, LauncherActivityInfo> = emptyMap()
@@ -42,7 +69,8 @@ class Apps(private val context: Context) {
                 .filter { it.componentName.packageName != context.packageName }
                 .map { key(it, me) to it }
         }.toMap()
-        icons.keys.retainAll(activities.keys)
+        icons.snapshot().keys.filter { it !in activities }.forEach { icons.remove(it) }
+        heroIcons.snapshot().keys.filter { it !in activities }.forEach { heroIcons.remove(it) }
         badges.keys.retainAll(activities.keys)
         return activities.map { (key, info) -> AppInfo(key, info.label.toString(), category(info.applicationInfo)) }
     }
@@ -53,21 +81,80 @@ class Apps(private val context: Context) {
      * tile is ~450 device px on the emulator and ~530 on Matt's phone. The 448 cap
      * bounds the all-apps cache at 448 x 448 x 4 ≈ 0.8 MB per icon.
      */
-    private fun iconPx() = (context.resources.displayMetrics.density * 160).toInt().coerceIn(288, 448)
+    private fun iconPx() = px
 
-    /** Renders missing icons, [first] keys before the rest; calls [progress] every few icons. */
-    fun loadIcons(first: List<String>, progress: () -> Unit) {
+    /** Before the first layout: density x 160, which covers a filled LARGE portrait tile. */
+    private fun defaultIconPx() = (context.resources.displayMetrics.density * 160).toInt().coerceIn(MIN_PX, MAX_PX)
+
+    /**
+     * Renders missing icons, [first] keys before the rest; calls [progress] every few icons.
+     * [first] (the visible tiles) always renders; [then] (the hub's later pages, in order) is
+     * prefetched only while the cache has room, so prefetching never evicts the icons on screen.
+     */
+    fun loadIcons(first: List<String>, then: List<String>, progress: () -> Unit) {
         val iconPx = iconPx()
-        val order = LinkedHashSet(first).apply { addAll(activities.keys) }
+        val firstSet = first.toSet()
+        val order = LinkedHashSet(first).apply { addAll(then) }
+        val prefetchLimit = icons.maxSize() * 3 / 4
         var n = 0
         for (key in order) {
             val info = activities[key] ?: continue
-            if (icons.containsKey(key)) continue
-            icons[key] = render(info, iconPx)
+            if (icons.get(key) != null) continue
+            if (key !in firstSet && icons.size() >= prefetchLimit) break
+            icons.put(key, render(info, iconPx))
             if (info.user != Process.myUserHandle()) badges[key] = renderBadge(info, iconPx)
             if (++n % 8 == 0) progress()
         }
         progress()
+    }
+
+    /** Queues a background render of [key]'s icon (once), then reports it via onIconReady. */
+    private fun requestIcon(key: String, hero: Boolean = false) {
+        val info = activities[key] ?: return
+        if (!pending.add(if (hero) "hero:$key" else key)) return
+        val cache = if (hero) heroIcons else icons
+        try {
+            iconWorker.execute {
+                try {
+                    if (cache.get(key) == null) cache.put(key, render(info, if (hero) heroPx else iconPx()))
+                } catch (e: Exception) {
+                    // A package removed mid-render: the next reload drops its tile anyway.
+                } finally {
+                    pending.remove(if (hero) "hero:$key" else key)
+                }
+                onIconReady()
+            }
+        } catch (e: RejectedExecutionException) {
+            pending.remove(if (hero) "hero:$key" else key) // shutting down
+        }
+    }
+
+    fun close() = iconWorker.shutdownNow()
+
+    /** One rendered icon's size in KB (the cache's unit). */
+    private fun iconKb() = iconPx().let { it * it * 4 / 1024 }
+
+    /**
+     * Fits the icon cache to a layout: icons render at [tilePx], the largest on-screen icon
+     * edge (no point rasterising a 300 px small tile at 448), and the budget holds
+     * [tilesPerFrame] icons (the most one frame can draw) plus a third for paging back.
+     * A size change drops the old rasters so tiles re-render sharp at the new size.
+     */
+    fun fitIconCache(tilesPerFrame: Int, tilePx: Int, heroIconPx: Int) {
+        // 0 means the view has no size yet: keep the current rasters until it does.
+        val nextHero = if (heroIconPx > 0) heroIconPx.coerceIn(MIN_PX, MAX_PX) else heroPx
+        if (nextHero != heroPx) {
+            heroPx = nextHero
+            heroIcons.evictAll()
+        }
+        val nextPx = if (tilePx > 0) tilePx.coerceIn(MIN_PX, MAX_PX) else px
+        if (nextPx != px) {
+            px = nextPx
+            icons.evictAll()
+            badges.clear()
+        }
+        val want = maxOf(MIN_ICONS, tilesPerFrame + tilesPerFrame / 3) * iconKb()
+        if (want != icons.maxSize()) icons.resize(want)
     }
 
     /** Personal apps keep the bare component key (so saved pins/recents survive); work apps add the profile serial. */
@@ -141,7 +228,16 @@ class Apps(private val context: Context) {
         }
     }
 
-    fun icon(key: String): Bitmap? = icons[key]
+    /** The cached icon, or null while it renders (the tile shows its plain body meanwhile). */
+    fun icon(key: String): Bitmap? = icons.get(key) ?: run { requestIcon(key); null }
+
+    /** The hero's full-size icon; until it renders, the grid-size one stands in (no blank flash). */
+    fun heroIcon(key: String): Bitmap? {
+        if (heroPx <= px) return icon(key)
+        heroIcons.get(key)?.let { return it }
+        requestIcon(key, hero = true)
+        return icon(key)
+    }
 
     fun component(key: String): ComponentName? = activities[key]?.componentName
 
@@ -284,6 +380,13 @@ class Apps(private val context: Context) {
         const val ACTION_TV = "dev.x360reborn.TOGGLE_TV"
         /** Launcher-internal action: show/hide the music channel. */
         const val ACTION_MUSIC = "dev.x360reborn.TOGGLE_MUSIC"
+        /** Icon-cache floor, in icons. */
+        private const val MIN_ICONS = 48
+        /** Full-size hero rasters kept (the current hero plus a few recent ones). */
+        private const val HERO_ICONS = 3
+        /** Icon raster bounds: 448 caps one icon at ~0.8 MB. */
+        private const val MIN_PX = 96
+        private const val MAX_PX = 448
         private const val RECENT = "recent:"
         private const val PINS = "pins"
         private const val TILE_SIZE = "tileSize"

@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.RadialGradient
 import android.graphics.Rect
@@ -91,8 +92,23 @@ class HomeView(
         invalidate()
     }
 
-    private fun hubClock(): String =
-        SimpleDateFormat(if (clock24h) "HH:mm" else "h:mm a", Locale.US).format(Date())
+    // The clock is drawn every frame while anything animates; format once per minute.
+    private val fmt12 = SimpleDateFormat("h:mm a", Locale.US)
+    private val fmt24 = SimpleDateFormat("HH:mm", Locale.US)
+    private var clockMinute = -1L
+    private var clockWas24 = false
+    private var clockString = ""
+
+    private fun hubClock(): String {
+        val now = System.currentTimeMillis()
+        val minute = now / 60_000L
+        if (minute != clockMinute || clock24h != clockWas24) {
+            clockMinute = minute
+            clockWas24 = clock24h
+            clockString = (if (clock24h) fmt24 else fmt12).format(Date(now))
+        }
+        return clockString
+    }
 
     /** Text paints cache their colours, so a theme change has to push the new ones in. */
     private fun applyColors() {
@@ -122,6 +138,8 @@ class HomeView(
     private var cascadeTotal = 0f
     /** System animator duration scale captured at cascade start; elapsed divides by it. */
     private var cascadeScale = 1f
+    /** Per-slot wave delays for [cascadePage], computed when the cascade starts. */
+    private var cascadeDelays = FloatArray(0)
 
     private var focusPage = 0
     private var focusSlot = 1
@@ -198,6 +216,28 @@ class HomeView(
 
     fun refreshClock() = invalidate()
 
+    /** Full-size icon for the hero tile; defaults to the grid icon. */
+    var heroIconFor: (String) -> Bitmap? = { iconFor(it) }
+
+    /**
+     * Icon edges [layout] draws, in screen px: (grid, hero). The grid edge is a filled
+     * tile's long side, the hero edge the hero's icon. (0, 0) before the view has a size.
+     * Apps rasterises icons at these sizes.
+     */
+    fun iconPxFor(layout: Layout): Pair<Int, Int> {
+        if (width == 0 || height == 0) return Pair(0, 0)
+        val scale = min(width / layout.w, height / layout.h)
+        var grid = 0f
+        var hero = 0f
+        for (t in listOf(layout.home, layout.grid)) {
+            for ((i, b) in t.slots.withIndex()) {
+                if (i == t.hero) hero = max(hero, Metrics.heroIconSize(b.w, b.h, true))
+                else grid = max(grid, max(b.w, b.h))
+            }
+        }
+        return Pair((grid * scale).roundToInt(), (hero * scale).roundToInt())
+    }
+
     // ---- layout ------------------------------------------------------------------------------
 
     /** Fade the hover chrome toward its target; true while it is still moving. */
@@ -218,9 +258,13 @@ class HomeView(
      * to the same three actions. Colours come from the theme like everything else.
      */
     private fun drawHoverChrome(canvas: Canvas) {
-        val boxes = Metrics.hoverChromeBoxes(L.w, L.portrait, L.twistX)
-        chromeBoxes.clear()
-        boxes.forEach { chromeBoxes += RectF(it.x, it.y, it.right, it.bottom) }
+        if (chromeLayout !== L) {
+            chromeLayout = L
+            chromeBoxList = Metrics.hoverChromeBoxes(L.w, L.portrait, L.twistX)
+            chromeBoxes.clear()
+            chromeBoxList.forEach { chromeBoxes += RectF(it.x, it.y, it.right, it.bottom) }
+        }
+        val boxes = chromeBoxList
         if (chromeAlpha <= 0f) return
         for ((i, b) in boxes.withIndex()) {
             val hot = hovering && b.contains(hoverPos.first, hoverPos.second)
@@ -310,8 +354,29 @@ class HomeView(
             intArrayOf(floorColor, (0x38 shl 24) or floorColor, (0xCB shl 24) or floorColor, Metrics.FLOOR, Metrics.FLOOR),
             floatArrayOf(0f, 300f / 720f, 500f / 720f, 600f / 720f, 1f), Shader.TileMode.CLAMP,
         )
+        // The aura moves with the channel pan but never changes shape: build it once, at the
+        // origin, and translate it per frame (it used to allocate a new gradient every frame).
+        auraR = max(L.w, L.h) * 0.56f * s
+        auraPaint.shader = RadialGradient(0f, 0f, auraR, intArrayOf(0x40FFFFFF, 0x00FFFFFF), null, Shader.TileMode.CLAMP)
+        tileGloss.clear()
+        heroShade.clear()
+        sheens.clear()
         applyColors()
     }
+
+    private val auraPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val auraMatrix = Matrix()
+    private var auraR = 0f
+
+    // Tile shaders depend only on a tile's size, so they are built once per size (cleared on fit).
+    /** Tile-body top highlight, by tile height. */
+    private val tileGloss = HashMap<Float, Shader>()
+    /** Hero bottom shade, by hero height. */
+    private val heroShade = HashMap<Float, Shader>()
+    /** Focus corner sheen at full strength, by tile size; the focus amount rides on paint alpha. */
+    private val sheens = HashMap<Long, Shader>()
+
+    private fun sizeKey(w: Float, h: Float) = (w.toRawBits().toLong() shl 32) or (h.toRawBits().toLong() and 0xFFFFFFFFL)
 
     /** The background ramp for the current style: full gradient, one flat mid colour, or a darkened ramp. */
     private fun bgColors(): IntArray {
@@ -391,7 +456,15 @@ class HomeView(
             canvas.save()
             canvas.scale(pinchScale, pinchScale, L.w / 2f, L.panelsY + L.panelsH / 2f)
         }
-        for (p in first..last) drawPage(canvas, p, now)
+        // Only pages that reach the screen are drawn: off-screen ones cost draw time and,
+        // worse, ask for icons the icon cache would then have to hold.
+        val reach = 1f / min(1f, min(tScale, pinchScale))
+        val viewL = (-ox / s - L.w / 2f) * reach + L.w / 2f - CULL_SLACK
+        val viewR = ((width - ox) / s - L.w / 2f) * reach + L.w / 2f + CULL_SLACK
+        for (p in first..last) {
+            val x = pageX(p)
+            if (x + hub.pages[p].template.w >= viewL && x <= viewR) drawPage(canvas, p, now)
+        }
         if (pinchScale != 1f) canvas.restore()
         drawTwist(canvas, cp, now)
         if (transforming) canvas.restore()
@@ -440,15 +513,20 @@ class HomeView(
     /** True while the hub is leaving or gone; input is ignored so nothing launches twice. */
     private val away get() = hidden || trans == Trans.FROM
 
+    /** Brings a hidden (or leaving) hub back with TransTo; a no-op while it is showing. */
+    fun reveal() {
+        if (away) play(Trans.TO)
+    }
+
     private fun drawAura(canvas: Canvas, cp: Float) {
         // BackgroundImagePanScale 1.3: the aura is 30% wider than the screen and pans across channels.
         val n = max(1, hub.channels.size - 1)
         val pan = L.w * (Metrics.PAN_SCALE - 1f)
         val cx = ox + (L.w / 2f + pan / 2f - pan * cp / n) * s
         val cy = oy + L.h * 0.36f * s
-        val r = max(L.w, L.h) * 0.56f * s
-        glowPaint.shader = RadialGradient(cx, cy, r, intArrayOf(0x40FFFFFF, 0x00FFFFFF), null, Shader.TileMode.CLAMP)
-        canvas.drawCircle(cx, cy, r, glowPaint)
+        auraMatrix.setTranslate(cx, cy)
+        auraPaint.shader?.setLocalMatrix(auraMatrix)
+        canvas.drawCircle(cx, cy, auraR, auraPaint)
     }
 
     private fun key(page: Int, slot: Int) = page * 64 + slot
@@ -463,7 +541,7 @@ class HomeView(
         // Entry cascade: only the page whose channel just became active animates, and
         // only while its wave is running; every other page draws at rest.
         val entryMs = if (page == cascadePage) cascadeElapsed(now) else -1f
-        fun delay(i: Int) = if (entryMs >= 0f) entryDelay(p.template, i) else -1f
+        fun delay(i: Int) = if (entryMs >= 0f) cascadeDelays.getOrElse(i) { 0f } else -1f
         // Draw the focused tile last so its 1.08x growth overlaps its neighbours.
         var focusedLast = -1
         for (i in p.tiles.indices) {
@@ -504,10 +582,16 @@ class HomeView(
         }
 
         if (f > 0f) {
-            // focus_state_white.png: a white sheen from the top-left corner.
-            fill.shader = LinearGradient(0f, 0f, b.w * 0.55f, b.h * 0.55f,
-                Color.argb((Metrics.CORNER_ALPHA * f * 255).roundToInt(), 255, 255, 255), 0x00FFFFFF, Shader.TileMode.CLAMP)
+            // focus_state_white.png: a white sheen from the top-left corner. The shader is
+            // cached at full strength and the focus amount scales it through the paint alpha.
+            fill.shader = sheens.getOrPut(sizeKey(b.w, b.h)) {
+                LinearGradient(0f, 0f, b.w * 0.55f, b.h * 0.55f,
+                    Color.argb((Metrics.CORNER_ALPHA * 255).roundToInt(), 255, 255, 255), 0x00FFFFFF, Shader.TileMode.CLAMP)
+            }
+            fill.color = Color.WHITE
+            fill.alpha = (f * 255).roundToInt()
             canvas.drawRect(rect, fill)
+            fill.alpha = 255
             fill.shader = null
         }
         val flash = max(Motion.flash(f, rising[k] == true), Motion.pressFlash(pressMs))
@@ -529,7 +613,7 @@ class HomeView(
     private fun drawTileBody(canvas: Canvas, b: Box) {
         fill.color = Metrics.TILE_GREEN
         canvas.drawRect(rect, fill)
-        fill.shader = LinearGradient(0f, 0f, 0f, b.h, 0x22FFFFFF, 0x00FFFFFF, Shader.TileMode.CLAMP)
+        fill.shader = tileGloss.getOrPut(b.h) { LinearGradient(0f, 0f, 0f, b.h, 0x22FFFFFF, 0x00FFFFFF, Shader.TileMode.CLAMP) }
         canvas.drawRect(rect, fill)
         fill.shader = null
     }
@@ -624,11 +708,13 @@ class HomeView(
         val areaH = Metrics.heroIconAreaH(b.h, tile.sub.isNotEmpty())
         val ix = (b.w - icon) / 2f
         val iy = (areaH - icon) / 2f
-        drawIcon(canvas, tile, ix, iy, icon)
+        drawIcon(canvas, tile, ix, iy, icon, hero = true)
         // The hero's badge sits where the baked-in one used to: the icon's bottom-right corner.
         tile.iconKey?.let { drawBadge(canvas, it, ix + icon, iy + icon, icon * BADGE_SIDE, 0f) }
         // mobyslot: gradient from 170/320 of the height, primary 17 pt, secondary 16 pt.
-        fill.shader = LinearGradient(0f, b.h * 170f / 320f, 0f, b.h, 0x00000000, 0xC0000000.toInt(), Shader.TileMode.CLAMP)
+        fill.shader = heroShade.getOrPut(b.h) {
+            LinearGradient(0f, b.h * 170f / 320f, 0f, b.h, 0x00000000, 0xC0000000.toInt(), Shader.TileMode.CLAMP)
+        }
         canvas.drawRect(0f, b.h * 170f / 320f, b.w, b.h, fill)
         fill.shader = null
         val primary = TextUtils.ellipsize(tile.label, heroPrimary, b.w - 40f, TextUtils.TruncateAt.END)
@@ -636,8 +722,8 @@ class HomeView(
         if (tile.sub.isNotEmpty()) canvas.drawText(tile.sub, 20f, b.h - 16f, heroSecondary)
     }
 
-    private fun drawIcon(canvas: Canvas, tile: Tile, x: Float, y: Float, size: Float) {
-        val bmp = tile.iconKey?.let(iconFor)
+    private fun drawIcon(canvas: Canvas, tile: Tile, x: Float, y: Float, size: Float, hero: Boolean = false) {
+        val bmp = tile.iconKey?.let(if (hero) heroIconFor else iconFor)
         if (bmp != null) {
             iconRect.set(x, y, x + size, y + size)
             canvas.drawBitmap(bmp, null, iconRect, bmpPaint)
@@ -814,8 +900,10 @@ class HomeView(
         cascadePage = page
         cascadeStart = SystemClock.uptimeMillis()
         val p = hub.pages[page]
+        // Delays are fixed for the run, so work them out once rather than per tile per frame.
+        cascadeDelays = FloatArray(p.template.slots.size) { entryDelay(p.template, it) }
         var maxDelay = 0f
-        for (i in p.tiles.indices) if (p.focusable(i)) maxDelay = max(maxDelay, entryDelay(p.template, i))
+        for (i in p.tiles.indices) if (p.focusable(i)) maxDelay = max(maxDelay, cascadeDelays[i])
         cascadeTotal = Anim.totalMs(maxDelay)
         invalidate()
     }
@@ -960,6 +1048,8 @@ class HomeView(
         const val BADGE_SIDE = 0.92f
         /** Gap between a filled tile's corner and its badge canvas. */
         const val BADGE_INSET = 3f
+        /** Design px past the screen edge a page may reach and still be drawn (focus growth, shadow). */
+        const val CULL_SLACK = 48f
         /** Hover chrome fade, in and out. */
         const val CHROME_FADE_MS = 150f
     }
@@ -971,6 +1061,9 @@ class HomeView(
     private var hoverPos = Pair(0f, 0f)
     private var chromeAlpha = 0f
     private val chromeBoxes = ArrayList<RectF>()
+    private var chromeBoxList: List<Box> = emptyList()
+    /** Layout the chrome boxes were built for; rebuilt when it changes. */
+    private var chromeLayout: Layout? = null
 
     private var downX = 0f
     private var downY = 0f

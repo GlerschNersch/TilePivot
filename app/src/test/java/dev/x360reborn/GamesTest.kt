@@ -163,4 +163,57 @@ class GamesTest {
         assertEquals(Glyph.GAMEPAD, gameTile.glyph)
         assertEquals(null, gameTile.iconKey)
     }
+
+    // ---- Games cache (rebuilds reuse the last scan) ----------------------------------------
+
+    @Test fun rebuildsReuseTheCachedScan() {
+        val root = tmp.newFolder("Xbox360")
+        file(root, "One.iso", big)
+        val games = Games(hasAccessFn = { true }, roots = listOf(root), clock = { 0L })
+        assertEquals(1, games.load().size)
+        file(root, "Two.iso", big)
+        // Same minute, not forced: the folders are not walked again.
+        assertEquals(1, games.load().size)
+        assertEquals(1, games.scans)
+    }
+
+    @Test fun forcedLoadRescans() {
+        val root = tmp.newFolder("Xbox360")
+        file(root, "One.iso", big)
+        val games = Games(hasAccessFn = { true }, roots = listOf(root), clock = { 0L })
+        games.load()
+        file(root, "Two.iso", big)
+        assertEquals(2, games.load(force = true).size)
+        assertEquals(2, games.found)
+        assertEquals(2, games.scans)
+    }
+
+    @Test fun staleCacheRescans() {
+        val root = tmp.newFolder("Xbox360")
+        file(root, "One.iso", big)
+        var now = 0L
+        val games = Games(hasAccessFn = { true }, roots = listOf(root), clock = { now }, maxAgeMs = 1_000L)
+        games.load()
+        file(root, "Two.iso", big)
+        now = 999L
+        assertEquals(1, games.load().size)
+        now = 1_000L
+        assertEquals(2, games.load().size)
+    }
+
+    @Test fun noAccessNeverScansAndDropsTheCache() {
+        val root = tmp.newFolder("Xbox360")
+        file(root, "One.iso", big)
+        var access = true
+        val games = Games(hasAccessFn = { access }, roots = listOf(root), clock = { 0L })
+        games.load()
+        access = false
+        assertEquals(0, games.load().size)
+        assertEquals(0, games.found)
+        // Access back: the dropped cache means a fresh walk, not the old list.
+        access = true
+        file(root, "Two.iso", big)
+        assertEquals(2, games.load().size)
+        assertEquals(2, games.scans)
+    }
 }

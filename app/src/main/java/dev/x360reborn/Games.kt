@@ -1,6 +1,5 @@
 package dev.x360reborn
 
-import android.content.Context
 import android.os.Environment
 import dev.x360reborn.home.GameInfo
 import java.io.File
@@ -138,25 +137,54 @@ object GameScanner {
     private const val LANG_STRIDE = 0x200
 }
 
-/** Android-facing store: gates the scan on all-files access and remembers the last count. */
-class Games(private val context: Context) {
+/**
+ * Android-facing store: gates the scan on all-files access and caches the last result.
+ *
+ * The hub rebuilds often (package changes, every settings toggle, after each launch), and
+ * none of those change the game folders, so a rebuild reuses the cached list. The folders
+ * are walked again only when [load] is forced (the settings tile's re-scan), when access was
+ * just granted, or when the cache is older than [maxAgeMs].
+ */
+class Games(
+    private val hasAccessFn: () -> Boolean = Environment::isExternalStorageManager,
+    private val roots: List<File> = DEFAULT_ROOTS.map(::File),
+    private val clock: () -> Long = System::currentTimeMillis,
+    private val maxAgeMs: Long = MAX_AGE_MS,
+) {
     @Volatile var found: Int = 0
         private set
 
-    fun hasAccess(): Boolean = Environment.isExternalStorageManager()
+    /** Walks done so far; tests use it to tell a cache hit from a rescan. */
+    @Volatile var scans: Int = 0
+        private set
+
+    private var cached: List<GameInfo>? = null
+    private var cachedAt = 0L
+
+    fun hasAccess(): Boolean = hasAccessFn()
 
     /** Loads the game list; returns empty (and never touches the filesystem) without access. */
-    fun load(): List<GameInfo> {
+    @Synchronized
+    fun load(force: Boolean = false): List<GameInfo> {
         if (!hasAccess()) {
             found = 0
+            cached = null
             return emptyList()
         }
-        val games = GameScanner.scan(DEFAULT_ROOTS.map(::File))
+        val now = clock()
+        cached?.let { if (!force && now - cachedAt < maxAgeMs) return it }
+        val games = GameScanner.scan(roots)
+        scans++
+        cached = games
+        cachedAt = now
         found = games.size
         return games
     }
 
     companion object {
+        /** A rebuild after this long walks the folders again, so files copied in show up. */
+        const val MAX_AGE_MS = 5 * 60_000L
+
         val DEFAULT_ROOTS = listOf(
             "/storage/emulated/0/Xbox360",
             "/storage/emulated/0/ROMs/xbox360",
