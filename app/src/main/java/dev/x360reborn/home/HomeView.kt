@@ -95,6 +95,7 @@ class HomeView(
 
     /** The active theme changed: rebuild the gradients and the cached text colours. */
     fun onThemeChanged() {
+        ambience.clear()
         fit()
         invalidate()
     }
@@ -709,9 +710,57 @@ class HomeView(
         canvas.drawBitmap(badge, null, iconRect, bmpPaint)
     }
 
+    // ---- hero ambience ------------------------------------------------------------
+    // The hero's backdrop is the focused item's own art, softened: stored at
+    // ~1/12 size and drawn back up through the filtering bitmap paint, which
+    // reads as a blur. Cached per item and theme, so a settled hero costs one
+    // drawBitmap per frame; an entry is recomputed only when its source bitmap
+    // changes -- a cover that finished decoding replaces the glyph that stood
+    // in for it, an app icon replaces its placeholder the same way.
+
+    /** Softened ambience by cache key, each with the source bitmap it came from. */
+    private val ambience = HashMap<String, Pair<Bitmap, Bitmap>>()
+
+    private fun drawAmbience(canvas: Canvas, tile: Tile, b: Box) {
+        val key = (tile.iconKey ?: "glyph:${tile.glyph}:${tile.label}") + '|' + Themes.active.id
+        val src = tile.iconKey?.let(heroIconFor)
+        val cached = ambience[key]
+        val soft = if (cached != null && (tile.iconKey == null || cached.first === src)) {
+            cached.second
+        } else {
+            val source = src ?: glyphBitmap(tile)
+            soften(source).also {
+                if (ambience.size > 12) ambience.clear()
+                ambience[key] = source to it
+            }
+        }
+        val win = Metrics.coverSrc(soft.width.toFloat(), soft.height.toFloat(), b.w, b.h)
+        srcRect.set(win.left.roundToInt(), win.top.roundToInt(), win.right.roundToInt(), win.bottom.roundToInt())
+        iconRect.set(0f, 0f, b.w, b.h)
+        canvas.drawBitmap(soft, srcRect, iconRect, bmpPaint)
+        // ~60% black scrim: the ambience glows, the name and sub stay legible.
+        fill.color = AMBIENCE_SCRIM
+        canvas.drawRect(rect, fill)
+    }
+
+    /** The tile's glyph drawn on its themed body, for tiles with no bitmap art. */
+    private fun glyphBitmap(tile: Tile): Bitmap {
+        val bmp = Bitmap.createBitmap(GLYPH_PX, GLYPH_PX, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        fill.color = Metrics.TILE_GREEN
+        c.drawRect(0f, 0f, GLYPH_PX.toFloat(), GLYPH_PX.toFloat(), fill)
+        drawIcon(c, tile, 0f, 0f, GLYPH_PX.toFloat())
+        return bmp
+    }
+
+    /** Downscale ~12x; drawn back up with filtering, the pixels melt into a wash. */
+    private fun soften(src: Bitmap): Bitmap =
+        Bitmap.createScaledBitmap(src, max(1, src.width / 12), max(1, src.height / 12), true)
+
     private fun drawHero(canvas: Canvas, tile: Tile, b: Box) {
         fill.color = Metrics.SLOT_DARK
         canvas.drawRect(rect, fill)
+        drawAmbience(canvas, tile, b)
         val areaH = Metrics.heroIconAreaH(b.h, tile.sub.isNotEmpty())
         val art = if (tile.iconKey?.startsWith(GAME_ART) == true) tile.iconKey?.let(heroIconFor) else null
         if (art != null) {
@@ -1357,6 +1406,10 @@ class HomeView(
         const val BADGE_SIDE = 0.92f
         /** Gap between a filled tile's corner and its badge canvas. */
         const val BADGE_INSET = 3f
+        /** Scrim over the hero ambience: ~60% black, so hero text stays legible. */
+        const val AMBIENCE_SCRIM = 0x99000000.toInt()
+        /** Edge of the offscreen a glyph is rendered at for its ambience source. */
+        const val GLYPH_PX = 144
         /** Design px past the screen edge a page may reach and still be drawn (focus growth, shadow). */
         const val CULL_SLACK = 48f
         /** Accessibility virtual-view ids: tiles are TILE_BASE + slot, channels TWIST_BASE + index. */

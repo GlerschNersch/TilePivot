@@ -314,6 +314,26 @@ the clock; a first-boot icon-raster wobble on sideloaded test apps was
 chased down and reproduced with a pristine 0.5.4 build, so it is the AVD,
 not the change).
 
+### Hero ambient backdrop
+
+The hero panel used to be flat dark with the icon floating in the middle
+of it. `HomeView.drawAmbience` now fills the panel first with the focused
+item's own art, softened: the source bitmap (app icon, box art, or the
+glyph rendered on its tile body) is stored at ~1/12 size and drawn back up
+cover-style through the filtering bitmap paint, which reads as a blur,
+then darkened with a ~60% black scrim; the existing bottom shade and the
+crisp art go on top, so the name and sub stay legible even over a white
+icon (verified with the Calendar hero). The softened bitmap is cached per
+item and theme and recomputed only when its source bitmap changes (a
+cover finishing its decode replaces the glyph that stood in for it), so a
+settled hero costs one drawBitmap. Because the backdrop is drawn inside
+drawHero, the focus twist and the entry cascade carry it with the tile.
+
+Emulator evidence in `~/workspace/x360reborn/shots-phase60/`: the Skate
+cover hero (ghosted cover wash behind the framed art), a dark-icon hero
+(the wash is near-black there, as it should be), and the white Calendar
+hero with fully legible text.
+
 ## Next
 - Hover chrome: first live visual check on hardware with a real pointing device (the
   emulator AVD has none; see the v0.5.0 note above).
