@@ -40,6 +40,7 @@ class MainActivity : Activity() {
     private lateinit var view: HomeView
     private lateinit var apps: Apps
     private lateinit var games: Games
+    private lateinit var library: GameLibrary
     private lateinit var covers: Covers
     private val loader = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
@@ -63,11 +64,13 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         apps = Apps(this) { main.post { view.invalidate() } }
-        games = Games()
-        hadAccess = games.hasAccess()
+        library = GameLibrary(this)
+        games = Games(library::roots)
         // The theme must be active before the view caches its first colours.
         Themes.active = Themes.byId(apps.themeId)
-        covers = Covers { main.post { view.invalidate() } }
+        covers = Covers({ uri -> runCatching { contentResolver.openInputStream(Uri.parse(uri)) }.getOrNull() }) {
+            main.post { view.invalidate() }
+        }
         // Game cover keys go to the cover cache, everything else is an app icon.
         view = HomeView(this, { k -> if (k.startsWith(GAME_ART)) covers.get(k) else apps.icon(k) },
             ::launch, ::options, apps::badge, { reload() }, ::tileSizeChosen, ::openSearch)
@@ -98,16 +101,7 @@ class MainActivity : Activity() {
         } else {
             view.reveal() // never resume onto a hub that is still hidden
         }
-        // Back from the all-files access screen (or access revoked meanwhile): rescan.
-        val access = games.hasAccess()
-        if (access != hadAccess) {
-            hadAccess = access
-            reload(rescanGames = true)
-        }
     }
-
-    /** All-files access as of the last check, so onResume notices a grant. */
-    private var hadAccess = false
 
     /** Set when we hand off to another activity, so onResume knows to play the return transition. */
     private var leftForApp = false
@@ -171,7 +165,7 @@ class MainActivity : Activity() {
             covers.update(gameList)
             val hub = HubBuilder.build(
                 list, apps.recent(), apps.pins(),
-                apps.settingsEntries(games.hasAccess(), games.found),
+                apps.settingsEntries(library.trees().size, games.found),
                 layout, apps.folders(), gameList,
                 hiddenChannels = hiddenChannels(),
             )
@@ -251,14 +245,14 @@ class MainActivity : Activity() {
                     Toast.makeText(this, "Can't open ${tile.label}", Toast.LENGTH_SHORT).show()
                 }
             }
-            is Target.Game -> launchGame(tile, t.path)
+            is Target.Game -> launchGame(tile, t)
             is Target.Action -> if (t.name == Apps.ACTION_TILE_SIZE) {
                 view.tileSize = view.tileSize.next()
                 tileSizeChosen(view.tileSize)
             } else if (t.name == Apps.ACTION_SEARCH) {
                 openSearch("")
             } else if (t.name == Apps.ACTION_XBOX) {
-                xboxAction()
+                gameLibrary()
             } else if (t.name == Apps.ACTION_THEME) {
                 themePicker()
             } else if (t.name == Apps.ACTION_BG) {
@@ -303,26 +297,35 @@ class MainActivity : Activity() {
      * the emulator's package, and game_uri / game_name extras only (no launch_args/launch_token —
      * those gate Xendroid+'s own per-launch options and a frontend must not send them).
      * game_uri is the game's absolute path; for folder games it is the default.xex path.
+     * A game whose folder has no direct path (see [HostPaths]) never gets an intent at all.
      */
-    private fun launchGame(tile: Tile, path: String) {
+    private fun launchGame(tile: Tile, game: Target.Game) {
+        val path = game.hostPath
+        if (path == null) {
+            // The hub already played its leave transition; bring it back before the dialog.
+            view.play(Trans.TO)
+            AlertDialog.Builder(this)
+                .setTitle("Can't open this game")
+                .setMessage("Xendroid+ needs a direct file path to the game, and the folder " +
+                    "“${tile.label}” was picked from can't provide one (Downloads, cloud and other " +
+                    "app-provided folders don't). Pick the folder from your device storage or SD " +
+                    "card instead, in settings › xbox 360 games.")
+                .setPositiveButton("OK", null)
+                .show()
+            return
+        }
         val pkg = XENDROID_PACKAGES.firstOrNull { p ->
             runCatching { packageManager.resolveActivity(Intent(ACTION_XENDROID).setPackage(p), 0) != null }
                 .getOrDefault(false)
         }
         if (pkg == null) {
-            // The hub already played its leave transition; bring it back before the dialog.
             view.play(Trans.TO)
             AlertDialog.Builder(this)
                 .setTitle("Xendroid+ is not installed")
-                .setMessage("Xbox 360 games need the Xendroid+ emulator. Install it, then this game will open in it.")
-                .setPositiveButton("Get Xendroid+") { _, _ ->
-                    try {
-                        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(XENDROID_RELEASES)))
-                    } catch (e: ActivityNotFoundException) {
-                        Toast.makeText(this, "No browser available", Toast.LENGTH_SHORT).show()
-                    }
-                }
-                .setNegativeButton("Cancel", null)
+                .setMessage("Xbox 360 games open in Xendroid+, a separate emulator app that is not " +
+                    "part of TilePivot. Get and install Xendroid+ yourself; once it is installed, " +
+                    "this game will open in it.")
+                .setPositiveButton("OK", null)
                 .show()
             return
         }
@@ -358,6 +361,7 @@ class MainActivity : Activity() {
         when (requestCode) {
             REQ_BACKUP -> saveBackup(uri)
             REQ_RESTORE -> confirmRestore(uri)
+            REQ_GAME_FOLDER -> addGameFolder(uri)
         }
     }
 
@@ -400,31 +404,78 @@ class MainActivity : Activity() {
             .show()
     }
 
-    /** Settings-channel Xbox entry: grant all-files access when missing, otherwise re-scan. */
-    private fun xboxAction() {
-        if (games.hasAccess()) {
-            reload(rescanGames = true)
-            // The loader is single-threaded, so this runs after the rescan: report its count.
-            loader.execute {
-                val n = games.found
-                main.post { Toast.makeText(this, "$n Xbox 360 games found", Toast.LENGTH_SHORT).show() }
+    /**
+     * Settings-channel Xbox entry: the game-library manager. Lists the picked folders (each
+     * marked when it can't be read now, or can't hand Xendroid+ a path), with Add and Re-scan;
+     * tapping a folder offers to remove it. Folder state is read off the main thread.
+     */
+    private fun gameLibrary() {
+        loader.execute {
+            val folders = library.folders()
+            main.post { if (!isFinishing && !isDestroyed) showGameLibrary(folders) }
+        }
+    }
+
+    private fun showGameLibrary(folders: List<GameLibrary.Folder>) {
+        val b = AlertDialog.Builder(this).setTitle("Xbox 360 game folders")
+        if (folders.isEmpty()) {
+            b.setMessage("Pick the folder that holds your Xbox 360 games (ISO, ZAR, Games on Demand " +
+                "or XBLA packages, or folders with a default.xex). You only need to do this once; " +
+                "TilePivot gets read-only access to that folder and nothing else.")
+        } else {
+            val rows = folders.map { f ->
+                val note = when {
+                    !f.available -> "\nunavailable: removed, unmounted or access revoked"
+                    f.path == null -> "\nno direct file path: games here can't open in Xendroid+"
+                    else -> ""
+                }
+                f.label + note
             }
+            b.setItems(rows.toTypedArray()) { _, which ->
+                folders.getOrNull(which)?.let(::confirmRemoveFolder)
+            }
+        }
+        b.setPositiveButton("Add folder") { _, _ -> pickGameFolder() }
+        if (folders.isNotEmpty()) b.setNeutralButton("Re-scan") { _, _ -> rescanGames() }
+        b.setNegativeButton("Close", null)
+        b.show()
+    }
+
+    private fun confirmRemoveFolder(folder: GameLibrary.Folder) {
+        AlertDialog.Builder(this)
+            .setTitle("Remove folder")
+            .setMessage("“${folder.label}” will no longer be scanned for games. The files stay where they are.")
+            .setPositiveButton("Remove") { _, _ ->
+                // Same single-threaded loader as the rescan, so the removal lands first.
+                loader.execute { library.remove(folder.tree) }
+                rescanGames()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun pickGameFolder() {
+        pickFile(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION),
+            REQ_GAME_FOLDER)
+    }
+
+    private fun addGameFolder(tree: Uri) {
+        if (!library.add(tree)) {
+            Toast.makeText(this, "Couldn't keep access to that folder", Toast.LENGTH_LONG).show()
             return
         }
-        try {
-            startActivity(Intent(
-                Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
-                Uri.fromParts("package", packageName, null),
-            ))
-        } catch (e: ActivityNotFoundException) {
-            try {
-                startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
-            } catch (e2: ActivityNotFoundException) {
-                Toast.makeText(this, "Not available on this device", Toast.LENGTH_SHORT).show()
-                return
-            }
+        rescanGames()
+    }
+
+    /** Re-walks the picked folders and reports the count once the scan is done. */
+    private fun rescanGames() {
+        reload(rescanGames = true)
+        // The loader is single-threaded, so this runs after the rescan: report its count.
+        loader.execute {
+            val n = games.found
+            main.post { Toast.makeText(this, "$n Xbox 360 games found", Toast.LENGTH_SHORT).show() }
         }
-        handedOff()
     }
 
     /** Search dialog: a text field over a live-filtered list of apps; tapping one launches it. */
@@ -579,10 +630,10 @@ class MainActivity : Activity() {
         const val HANDOFF_GUARD_MS = 2_000L
         const val REQ_BACKUP = 1
         const val REQ_RESTORE = 2
+        const val REQ_GAME_FOLDER = 3
         /** Xendroid+'s emulator launch action (EmulatorHostActivity). */
         const val ACTION_XENDROID = "xendroid.intent.action.xendroid"
         /** Release builds install as .fork; the plain package is the suffix-overridden build. */
         val XENDROID_PACKAGES = listOf("xendroid.compose.fork", "xendroid.compose")
-        const val XENDROID_RELEASES = "https://github.com/phforner0/Xendroid-Plus/releases"
     }
 }

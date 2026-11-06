@@ -11,16 +11,20 @@ data class AppInfo(val key: String, val label: String, val category: Category = 
 data class FolderInfo(val id: String, val name: String, val members: List<String>)
 
 /**
- * An Xbox 360 game file on shared storage, launched through the Xendroid+ emulator.
- * [cover] is an image file the user placed beside the game; [embeddedArt] means the game's
- * own STFS header carries a thumbnail (Games on Demand / XBLA). Either gives the tile art.
+ * An Xbox 360 game found in a picked folder, launched through the Xendroid+ emulator.
+ * [uri] is the game's document URI (the default.xex's for folder games) and its identity
+ * in the app. [hostPath] is the absolute path Xendroid+ is handed, or null when the folder's
+ * storage cannot provide one (the tile still shows; launching explains why it can't).
+ * [cover] is the document URI of an image the user placed beside the game; [embeddedArt]
+ * means the game's own STFS header carries a thumbnail (Games on Demand / XBLA).
  */
 data class GameInfo(
-    val path: String,
+    val uri: String,
     val name: String,
     val format: String,
     val cover: String? = null,
     val embeddedArt: Boolean = false,
+    val hostPath: String? = null,
 ) {
     val hasArt get() = cover != null || embeddedArt
 }
@@ -33,8 +37,11 @@ sealed interface Target {
     /** [external] actions open another activity (and play the leave transition); internal ones don't. */
     data class Action(val name: String, val external: Boolean = true) : Target
     data class Channel(val index: Int) : Target
-    /** An Xbox 360 game; [path] is the game_uri handed to Xendroid+ (the default.xex path for folder games). */
-    data class Game(val path: String) : Target
+    /**
+     * An Xbox 360 game: [uri] identifies it; [hostPath] is the game_uri handed to Xendroid+
+     * (the default.xex path for folder games), null when its folder has no direct file path.
+     */
+    data class Game(val uri: String, val hostPath: String? = null) : Target
 }
 
 enum class Kind { TILE, HERO, WIDE }
@@ -116,8 +123,8 @@ object HubBuilder {
         // Xbox 360 games ride in the games channel, after the Android game apps.
         val xboxTiles = games360.sortedBy { it.name.lowercase() }.map {
             // Games with art show it; the rest keep the drawn controller glyph.
-            Tile(it.name, Target.Game(it.path), sub = it.format, glyph = Glyph.GAMEPAD,
-                iconKey = if (it.hasArt) GAME_ART + it.path else null)
+            Tile(it.name, Target.Game(it.uri, it.hostPath), sub = it.format, glyph = Glyph.GAMEPAD,
+                iconKey = if (it.hasArt) GAME_ART + it.uri else null)
         }
         for ((title, cat) in listOf("games" to Category.GAME, "tv & movies" to Category.VIDEO, "music" to Category.MUSIC)) {
             if (title in hiddenChannels) continue

@@ -353,16 +353,13 @@ class Apps(
     fun setChannelHidden(title: String, hidden: Boolean) =
         prefs.edit().putBoolean(HIDE + title, hidden).apply()
 
-    fun settingsEntries(xboxGranted: Boolean = false, xboxCount: Int = 0): List<SettingsEntry> {
+    fun settingsEntries(xboxFolders: Int = 0, xboxCount: Int = 0): List<SettingsEntry> {
         val settingsApp = activities.keys.firstOrNull { it.startsWith("com.android.settings/") }
         return listOf(
-            // Xbox 360 games live on shared storage: without all-files access the entry is the
-            // grant prompt; with it, the entry reports the scan and re-scans when tapped.
-            if (xboxGranted) {
-                SettingsEntry("xbox 360 games: $xboxCount found", ACTION_XBOX, glyph = Glyph.GAMEPAD, external = false)
-            } else {
-                SettingsEntry("xbox 360 games: grant folder access", ACTION_XBOX, glyph = Glyph.GAMEPAD, external = false)
-            },
+            // Xbox 360 games come from folders the user picked; with none picked the entry
+            // invites the one-time pick, otherwise it reports the scan. Either way a tap opens
+            // the game-library manager (add / remove folders, re-scan).
+            SettingsEntry(xboxEntryLabel(xboxFolders, xboxCount), ACTION_XBOX, glyph = Glyph.GAMEPAD, external = false),
             SettingsEntry("theme: ${Themes.byId(themeId).name.lowercase()}", ACTION_THEME, glyph = Glyph.THEME, external = false),
             SettingsEntry("tile size: ${tileSize.label}", ACTION_TILE_SIZE, glyph = Glyph.TILE_SIZE, external = false),
             SettingsEntry("background: ${bgStyle.label}", ACTION_BG, external = false),
@@ -385,11 +382,15 @@ class Apps(
     }
 
     companion object {
+        /** The settings row for the game library: the one-time pick invitation, or the scan count. */
+        fun xboxEntryLabel(folders: Int, count: Int): String =
+            if (folders == 0) "xbox 360 games: pick a games folder" else "xbox 360 games: $count found"
+
         /** Launcher-internal action: cycle the tile size. */
         const val ACTION_TILE_SIZE = "dev.x360reborn.TILE_SIZE"
         /** Launcher-internal action: open the app search dialog. */
         const val ACTION_SEARCH = "dev.x360reborn.SEARCH"
-        /** Launcher-internal action: grant all-files access for Xbox 360 games, or re-scan. */
+        /** Launcher-internal action: open the Xbox 360 game-library manager. */
         const val ACTION_XBOX = "dev.x360reborn.XBOX"
         /** Launcher-internal action: open the theme picker. */
         const val ACTION_THEME = "dev.x360reborn.THEME"

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The picked game folders (prefs file game_library) are persisted SAF grants: they belong to
+  this install on this device, so neither cloud backup nor device transfer carries them.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="game_library.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="game_library.xml" />
+    </device-transfer>
+</data-extraction-rules>

@@ -5,18 +5,21 @@ import android.graphics.BitmapFactory
 import android.util.LruCache
 import dev.x360reborn.home.GAME_ART
 import dev.x360reborn.home.GameInfo
-import java.io.File
+import java.io.InputStream
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
 
 /**
- * Xbox 360 game cover art, keyed like icons ([GAME_ART] + game path). Art comes from an
+ * Xbox 360 game cover art, keyed like icons ([GAME_ART] + game uri). Art comes from an
  * image the user put beside the game, or else the thumbnail in a Games on Demand / XBLA
- * package's own header (see [GameScanner.stfsThumbnail]). Decoding happens off the main
- * thread; until a cover is ready the tile keeps its drawn controller glyph.
+ * package's own header (see [GameScanner.stfsThumbnail]). Both are read as streams from
+ * the picked folder through [open]. Decoding happens off the main thread; until a cover is
+ * ready the tile keeps its drawn controller glyph.
  */
 class Covers(
+    /** Opens a document uri for reading (ContentResolver in the app); null on failure. */
+    private val open: (String) -> InputStream?,
     /** A cover finished decoding (called off the main thread). */
     private val onReady: () -> Unit,
 ) {
@@ -35,7 +38,7 @@ class Covers(
 
     /** The latest scan: drops art for games that are gone or whose cover source changed. */
     fun update(list: List<GameInfo>) {
-        val next = list.filter { it.hasArt }.associateBy { GAME_ART + it.path }
+        val next = list.filter { it.hasArt }.associateBy { GAME_ART + it.uri }
         val old = games
         for (key in cache.snapshot().keys) if (next[key] != old[key]) cache.remove(key)
         failed.clear()
@@ -65,15 +68,18 @@ class Covers(
     }
 
     private fun decode(game: GameInfo): Bitmap? {
-        game.cover?.let { path ->
+        game.cover?.let { uri ->
+            // Two passes (bounds, then pixels), so the document is opened twice.
             val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeFile(path, opts)
+            // A bounds-only decode always returns null; success shows in outWidth/outHeight.
+            val input = open(uri) ?: return null
+            input.use { BitmapFactory.decodeStream(it, null, opts) }
             if (opts.outWidth <= 0 || opts.outHeight <= 0) return null
             opts.inJustDecodeBounds = false
             opts.inSampleSize = sampleSize(opts.outWidth, opts.outHeight, edgePx)
-            return BitmapFactory.decodeFile(path, opts)
+            return open(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
         }
-        val png = GameScanner.stfsThumbnail(File(game.path)) ?: return null
+        val png = GameScanner.stfsThumbnail { open(game.uri) } ?: return null
         return BitmapFactory.decodeByteArray(png, 0, png.size)
     }
 
