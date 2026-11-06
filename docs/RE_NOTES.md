@@ -263,6 +263,32 @@ are opaque and stay solid.
   GamesTest 12), all passing. Emulator evidence (frame sequences of two channel
   entries) in `~/workspace/x360reborn/shots-phase51/`.
 
+## App v0.6.0 (2026-11-06): games-channel polish
+
+Three improvements from a review of Matt's phone games channel: 13 tiles filling
+half the screen, his one 360 game reduced to a generic glyph, and a hero panel
+that was mostly empty black. (0.5.2-0.5.4 shipped without notes sections; this
+release resumes the habit.)
+
+### Box art for Xbox 360 games, completed
+
+0.5.4 added sidecar art under the game's own file name, plus STFS header
+thumbnails. 0.6.0 completes the convention (`GameScanner.artCandidates` /
+`resolveArt`, unit-tested):
+
+- Candidate names, in order: the artifact's base name ("Skate 3" for
+  Skate 3.iso, or a folder game's folder name), then `cover`, `boxart`,
+  `folder` -- each with .jpg, .png, .jpeg, .webp, matched case-insensitively.
+- Folders searched, in order: ISO/ZAR look beside the file only. STFS packages
+  look beside the package, then one folder up. Folder (default.xex) games look
+  inside their own folder, then beside it. A game's own folder always beats
+  its parent. With no matching file, an STFS header thumbnail is the fallback.
+- Grid tiles cover-fill the art like app icons (0.4.3). The hero now frames
+  the WHOLE cover (`Metrics.fitSize`): fit inside the hero's icon area,
+  centred, aspect untouched -- the old square draw stretched a 3:4 cover by
+  a third. Decoding stays in `Covers`: off-thread, subsampled toward the
+  largest drawn edge, 24 MB LRU; any failure leaves the drawn gamepad glyph.
+
 ## Next
 - Hover chrome: first live visual check on hardware with a real pointing device (the
   emulator AVD has none; see the v0.5.0 note above).

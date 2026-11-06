@@ -288,6 +288,50 @@ class GamesTest {
         assertEquals(cover.absolutePath, GameScanner.scan(listOf(root))[0].cover)
     }
 
+    @Test fun artCandidatesPreferTheGamesOwnNameThenGenericNames() {
+        val c = GameScanner.artCandidates("Skate 3")
+        assertEquals(listOf("Skate 3.jpg", "Skate 3.png", "Skate 3.jpeg", "Skate 3.webp"), c.take(4))
+        assertTrue(c.indexOf("cover.jpg") > c.indexOf("Skate 3.webp"))
+        assertTrue(c.indexOf("cover.jpg") < c.indexOf("boxart.jpg"))
+        assertTrue(c.indexOf("boxart.jpg") < c.indexOf("folder.jpg"))
+    }
+
+    @Test fun resolveArtSearchesOwnFolderBeforeParent() {
+        val own = File("own")
+        val parent = File("parent")
+        val listing = mapOf(own to arrayOf("cover.jpg"), parent to arrayOf("Game.jpg"))
+        // A generic name in the game's own folder beats the game's name one level up.
+        assertEquals(File(own, "cover.jpg").absolutePath,
+            GameScanner.resolveArt(listOf(own, parent), "Game") { listing[it] })
+        // Within one folder, the game's own name beats the generic name.
+        val both = mapOf(own to arrayOf("cover.jpg", "Game.png"))
+        assertEquals(File(own, "Game.png").absolutePath,
+            GameScanner.resolveArt(listOf(own), "Game") { both[it] })
+    }
+
+    @Test fun isoFallsBackToTheGenericCoverName() {
+        val root = tmp.newFolder("Xbox360")
+        file(root, "Plain Game.iso", big)
+        val cover = file(root, "cover.JPG", ByteArray(10))
+        assertEquals(cover.absolutePath, GameScanner.scan(listOf(root))[0].cover)
+    }
+
+    @Test fun folderGameFallsBackToArtBesideTheFolder() {
+        val root = tmp.newFolder("Xbox360")
+        val dir = File(root, "Folder Game")
+        file(dir, "default.xex", big)
+        val cover = file(root, "Folder Game.jpg", ByteArray(10))
+        assertEquals(cover.absolutePath, GameScanner.scan(listOf(root))[0].cover)
+    }
+
+    @Test fun godPackageFallsBackToArtAboveItsFolder() {
+        val root = tmp.newFolder("Xbox360")
+        val titleDir = File(root, "4D5307D6")
+        file(titleDir, "58410A06", stfsWithThumbs(null, null))
+        val cover = file(root, "cover.png", ByteArray(10))
+        assertEquals(cover.absolutePath, GameScanner.scan(listOf(root)).single().cover)
+    }
+
     @Test fun gamesWithoutArtKeepTheGlyphTile() {
         val root = tmp.newFolder("Xbox360")
         file(root, "No Art.iso", big)

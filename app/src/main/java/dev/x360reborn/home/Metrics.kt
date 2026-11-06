@@ -205,6 +205,17 @@ object Metrics {
      * on the other axis, never stretch. A square icon into the standard 174x130 tile
      * keeps the middle 74.7% of its height; a same-aspect source is used whole.
      */
+    /**
+     * The size a [srcW]x[srcH] image takes when fit whole inside [availW]x[availH]:
+     * scaled by the smaller factor, aspect untouched (the hero's framed box art).
+     * A degenerate source fits to nothing rather than dividing by zero.
+     */
+    fun fitSize(srcW: Float, srcH: Float, availW: Float, availH: Float): Pair<Float, Float> {
+        if (srcW <= 0f || srcH <= 0f) return 0f to 0f
+        val scale = min(availW / srcW, availH / srcH)
+        return (srcW * scale) to (srcH * scale)
+    }
+
     fun coverSrc(srcW: Float, srcH: Float, dstW: Float, dstH: Float): CoverSrc {
         val scale = max(dstW / srcW, dstH / srcH)
         val w = dstW / scale

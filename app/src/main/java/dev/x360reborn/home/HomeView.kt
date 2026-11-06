@@ -712,13 +712,22 @@ class HomeView(
     private fun drawHero(canvas: Canvas, tile: Tile, b: Box) {
         fill.color = Metrics.SLOT_DARK
         canvas.drawRect(rect, fill)
-        val icon = Metrics.heroIconSize(b.w, b.h, tile.sub.isNotEmpty())
         val areaH = Metrics.heroIconAreaH(b.h, tile.sub.isNotEmpty())
-        val ix = (b.w - icon) / 2f
-        val iy = (areaH - icon) / 2f
-        drawIcon(canvas, tile, ix, iy, icon, hero = true)
-        // The hero's badge sits where the baked-in one used to: the icon's bottom-right corner.
-        tile.iconKey?.let { drawBadge(canvas, it, ix + icon, iy + icon, icon * BADGE_SIDE, 0f) }
+        val art = if (tile.iconKey?.startsWith(GAME_ART) == true) tile.iconKey?.let(heroIconFor) else null
+        if (art != null) {
+            // Box art keeps its own shape: the whole cover, fit inside the icon
+            // area and centred -- never stretched into the square an app icon gets.
+            val (w, h) = Metrics.fitSize(art.width.toFloat(), art.height.toFloat(), b.w - 40f, areaH)
+            iconRect.set((b.w - w) / 2f, (areaH - h) / 2f, (b.w + w) / 2f, (areaH + h) / 2f)
+            canvas.drawBitmap(art, null, iconRect, bmpPaint)
+        } else {
+            val icon = Metrics.heroIconSize(b.w, b.h, tile.sub.isNotEmpty())
+            val ix = (b.w - icon) / 2f
+            val iy = (areaH - icon) / 2f
+            drawIcon(canvas, tile, ix, iy, icon, hero = true)
+            // The hero's badge sits where the baked-in one used to: the icon's bottom-right corner.
+            tile.iconKey?.let { drawBadge(canvas, it, ix + icon, iy + icon, icon * BADGE_SIDE, 0f) }
+        }
         // mobyslot: gradient from 170/320 of the height, primary 17 pt, secondary 16 pt.
         fill.shader = heroShade.getOrPut(b.h) {
             LinearGradient(0f, b.h * 170f / 320f, 0f, b.h, 0x00000000, 0xC0000000.toInt(), Shader.TileMode.CLAMP)

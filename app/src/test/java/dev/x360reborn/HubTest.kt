@@ -243,6 +243,19 @@ class HubTest {
         assertEquals(58f, Metrics.gridIconSize(100f, 130f, hasSub = false), 0f)
     }
 
+    @Test fun fitSizeFramesTheWholeImage() {
+        // Portrait box art into a wide hero area: the height is the binding edge.
+        val (w, h) = Metrics.fitSize(600f, 800f, 668f, 200f)
+        assertEquals(200f, h, 0.01f)
+        assertEquals(150f, w, 0.01f)
+        // A narrow area binds on width instead.
+        val (w2, h2) = Metrics.fitSize(600f, 800f, 90f, 200f)
+        assertEquals(90f, w2, 0.01f)
+        assertEquals(120f, h2, 0.01f)
+        // A degenerate source fits to nothing rather than dividing by zero.
+        assertEquals(0f to 0f, Metrics.fitSize(0f, 800f, 90f, 200f))
+    }
+
     @Test fun coverSrcCropsSquareIconToTile() {
         // Square 288px icon into the standard 174x130 tile: full width is kept, and the
         // middle 215 of 288 rows (74.7% of the height) -- the rest is centre-cropped.

@@ -69,7 +69,7 @@ object GameScanner {
             // STFS containers (Games on Demand, XBLA) carry their type in the first 4 bytes.
             // Their real title is in the header metadata; the file name is a content ID.
             file.length() >= 4 && hasStfsMagic(file) -> {
-                val cover = sidecarCover(file)
+                val cover = packageCover(file)
                 add(GameInfo(
                     file.absolutePath, stfsTitle(file) ?: cleanName(file.nameWithoutExtension), "GOD",
                     cover = cover,
@@ -81,30 +81,58 @@ object GameScanner {
     }
 
     /** Image extensions accepted for user-supplied covers, in preference order. */
-    private val COVER_EXT = listOf("png", "jpg", "jpeg", "webp")
+    private val COVER_EXT = listOf("jpg", "png", "jpeg", "webp")
 
-    /** Cover file names looked for inside a folder game, in preference order. */
+    /** Generic cover file names, in preference order after the game's own name. */
     private val COVER_NAMES = listOf("cover", "boxart", "folder")
 
-    /** "Game Name.iso" -> "Game Name.png" (or .jpg/.jpeg/.webp) beside it, any case. */
-    fun sidecarCover(game: File): String? {
-        val dir = game.parentFile ?: return null
-        val base = game.nameWithoutExtension
-        val names = runCatching { dir.list() }.getOrNull() ?: return null
-        for (ext in COVER_EXT) {
-            names.firstOrNull { it.equals("$base.$ext", ignoreCase = true) }?.let { return File(dir, it).absolutePath }
+    /**
+     * Candidate cover file names for a game whose artifact base name is [base]
+     * ("Skate 3" for Skate 3.iso, or for a folder of that name), most preferred
+     * first: the game's own name with each image extension, then the generic
+     * names (cover, boxart, folder) the same way.
+     */
+    fun artCandidates(base: String): List<String> =
+        (listOf(base) + COVER_NAMES).flatMap { name -> COVER_EXT.map { ext -> "$name.$ext" } }
+
+    /**
+     * The first of [artCandidates] found in any of [dirs], searched in order so a
+     * game's own folder beats its parent; names match case-insensitively against
+     * each directory's listing. [list] is injectable so tests can drive the order.
+     */
+    fun resolveArt(
+        dirs: List<File>,
+        base: String,
+        list: (File) -> Array<String>? = { dir -> runCatching { dir.list() }.getOrNull() },
+    ): String? {
+        for (dir in dirs) {
+            val names = list(dir) ?: continue
+            for (cand in artCandidates(base)) {
+                names.firstOrNull { it.equals(cand, ignoreCase = true) }
+                    ?.let { return File(dir, it).absolutePath }
+            }
         }
         return null
     }
 
-    /** cover.png / boxart.jpg / folder.jpg ... inside a folder game, any case. */
-    fun folderCover(dir: File): String? {
-        val names = runCatching { dir.list() }.getOrNull() ?: return null
-        for (n in COVER_NAMES) for (ext in COVER_EXT) {
-            names.firstOrNull { it.equals("$n.$ext", ignoreCase = true) }?.let { return File(dir, it).absolutePath }
-        }
-        return null
+    /** "Game Name.iso" -> "Game Name.jpg" (or cover.jpg, boxart.jpg, ...) beside it, any case. */
+    fun sidecarCover(game: File): String? {
+        val dir = game.parentFile ?: return null
+        return resolveArt(listOf(dir), game.nameWithoutExtension)
     }
+
+    /**
+     * Cover for an STFS package: beside the package first, then one folder up
+     * (packages live in title-id folders; the art often sits beside that folder).
+     */
+    fun packageCover(game: File): String? {
+        val dir = game.parentFile ?: return null
+        return resolveArt(listOfNotNull(dir, dir.parentFile).distinct(), game.nameWithoutExtension)
+    }
+
+    /** cover.jpg / boxart.jpg / ... inside a folder game first, then the same names beside it. */
+    fun folderCover(dir: File): String? =
+        resolveArt(listOfNotNull(dir, dir.parentFile).distinct(), dir.name)
 
     /**
      * The PNG thumbnail in an STFS package's XContent header, or null.
