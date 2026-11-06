@@ -46,9 +46,9 @@ object Backup {
         } catch (e: Exception) {
             throw BadBackup("Not a settings backup")
         }
-        if (root.optString("format") != FORMAT) throw BadBackup("Not an X360 Reborn settings backup")
+        if (root.optString("format") != FORMAT) throw BadBackup("Not a TilePivot settings backup")
         val version = root.optInt("version", -1)
-        if (version < 1 || version > VERSION) throw BadBackup("Backup is from a newer version of X360 Reborn")
+        if (version < 1 || version > VERSION) throw BadBackup("Backup is from a newer version of TilePivot")
         val values = root.optJSONObject("prefs") ?: throw BadBackup("Backup has no settings")
         val out = LinkedHashMap<String, Any>()
         for (key in values.keys()) {

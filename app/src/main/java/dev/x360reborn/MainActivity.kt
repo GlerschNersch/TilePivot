@@ -279,7 +279,7 @@ class MainActivity : Activity() {
                 pickFile(Intent(Intent.ACTION_CREATE_DOCUMENT)
                     .addCategory(Intent.CATEGORY_OPENABLE)
                     .setType("application/json")
-                    .putExtra(Intent.EXTRA_TITLE, "x360reborn-settings.json"), REQ_BACKUP)
+                    .putExtra(Intent.EXTRA_TITLE, "tilepivot-settings.json"), REQ_BACKUP)
             } else if (t.name == Apps.ACTION_RESTORE) {
                 pickFile(Intent(Intent.ACTION_OPEN_DOCUMENT)
                     .addCategory(Intent.CATEGORY_OPENABLE)

@@ -1,4 +1,6 @@
-# X360 Reborn
+# TilePivot
+
+Formerly X360Reborn (renamed in v0.7.0 for Google Play trademark hygiene; see docs/RE_NOTES.md).
 
 An Android home-screen launcher in the style of the Xbox 360 "Metro" dashboard (2.0.17559).
 
@@ -8,9 +10,9 @@ sounds or fonts are included. All graphics are drawn in code.
 
 ## Install
 
-1. Download `X360Reborn-<version>.apk` from [Releases](../../releases).
+1. Download `TilePivot-<version>.apk` from [Releases](../../releases).
 2. Open it on your phone and allow installing from that source when Android asks.
-3. Press Home and choose **X360 Reborn**. To change it later, go to Settings → Apps → Default apps → Home app.
+3. Press Home and choose **TilePivot**. To change it later, go to Settings → Apps → Default apps → Home app.
 
 Requires Android 13 or newer. Release APKs are signed with the Reborn release key, so a release won't
 install over a build you made yourself with the debug key; uninstall that one first.
@@ -42,7 +44,7 @@ Needs the Android SDK and JDK 17.
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Then pick X360 Reborn under Settings → Apps → Default apps → Home app.
+Then pick TilePivot under Settings → Apps → Default apps → Home app.
 
 ## Reverse-engineering tools
 

@@ -8,11 +8,11 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "dev.x360reborn"
+        applicationId = "dev.tilepivot"
         minSdk = 33
         targetSdk = 36
-        versionCode = 15
-        versionName = "0.6.1"
+        versionCode = 16
+        versionName = "0.7.0"
     }
 
     // Release signing comes from ~/.gradle/gradle.properties (never the repo): REBORN_KEYSTORE,
