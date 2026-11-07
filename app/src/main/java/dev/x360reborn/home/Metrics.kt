@@ -256,6 +256,30 @@ object Metrics {
         return size
     }
 
+    // Settings gear in the clock strip (0.9.0): a persistent shortcut visible on
+    // every channel, after tester feedback that settings sat too many pivots
+    // away. The hit box is a square anchored to the left of the clock text, in
+    // the clock band above the pivot strip, so it never reaches the channel
+    // names. 108 design px is at least 48 dp at every tile size on the phones
+    // and the AVD this app is verified on; the drawn glyph is smaller.
+    const val GEAR_BOX = 108f
+    const val GEAR_GLYPH = 48f
+    const val GEAR_GAP = 16f
+
+    /** Vertical centre of the clock's text: the baseline sits at clockY, glyphs rise above it. */
+    fun clockCenterY(clockY: Float) = clockY - pt(18f) * 0.36f
+
+    /**
+     * The settings gear's hit box: a [GEAR_BOX] square centred on the clock
+     * text's height, ending [GEAR_GAP] to the left of the clock text (the clock
+     * is right-aligned, ending at [clockX], its text [clockTextW] wide).
+     */
+    fun settingsGearBox(clockX: Float, clockY: Float, clockTextW: Float): Box {
+        val right = clockX - clockTextW - GEAR_GAP
+        val cy = clockCenterY(clockY)
+        return Box(right - GEAR_BOX, cy - GEAR_BOX / 2f, GEAR_BOX, GEAR_BOX)
+    }
+
     /** The three hover-chrome boxes in order: back, home, search. */
     fun hoverChromeBoxes(w: Float, portrait: Boolean, twistX: Float): List<Box> {
         if (portrait) {
@@ -284,12 +308,18 @@ data class Template(
     val wide: List<Int> = emptyList(),
     /** Uniform cells: shortcuts move up to follow the last app instead of leaving a gap. */
     val compact: Boolean = false,
+    /**
+     * Top of the scrolling grid region in page space (0.9.0): the hero occupies
+     * [0, gridTop) and never scrolls; grid slots live at y >= gridTop in content
+     * space and scroll inside the panel region below it. 0 for layout templates.
+     */
+    val gridTop: Float = 0f,
 ) {
     /** Every box (and the page size) scaled by [k]; slot indices keep their meaning. */
     fun scaled(k: Float): Template = Template(
         w * k, h * k,
         slots.map { Box(it.x * k, it.y * k, it.w * k, it.h * k) },
-        hero, wide, compact,
+        hero, wide, compact, gridTop * k,
     )
 
     /**
@@ -307,7 +337,8 @@ data class Template(
         val moved = slots.mapIndexed { i, b ->
             if (i == this.hero) hero else Box(b.x + dx, b.y + dy, b.w, b.h)
         }
-        return Template(pageW, pageH, moved, this.hero, wide, compact)
+        return Template(pageW, pageH, moved, this.hero, wide, compact,
+            if (gridTop > 0f) gridTop + dy else gridTop)
     }
 }
 
