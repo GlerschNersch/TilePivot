@@ -30,7 +30,12 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // R8 + resource shrinking. The app is plain Kotlin custom Views with no reflection or
+            // AndroidX, so no keep rules are needed (proguard-rules.pro stays empty unless a
+            // smoke test shows otherwise).
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
     }
