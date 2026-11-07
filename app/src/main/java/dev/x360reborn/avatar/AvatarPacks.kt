@@ -18,7 +18,15 @@ interface AvatarPack {
     val items: List<PackItem>
     /** The item's renderable parts with colours applied ([skin] and [hair] are 0xRRGGBB). */
     fun load(item: PackItem, skin: Int, hair: Int): List<PackPart>
+    /**
+     * A whole outfit ready to animate: every item's parts bound to one shared [Rig] (named joints
+     * as described there, plus a base pose), with anything hidden under clothing already removed.
+     */
+    fun outfit(items: List<PackItem>, skin: Int, hair: Int): PackModel
 }
+
+/** An animatable outfit: [parts] skinned to [rig]. */
+class PackModel(val parts: List<SkinnedPart>, val rig: Rig)
 
 /**
  * [slot] is one of [PackItem.SLOTS] (or "other"); [male]/[female] say who it fits (both = unisex).

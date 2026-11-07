@@ -76,3 +76,38 @@ class AvatarTest {
 
     @Suppress("unused") private fun close(a: Float, b: Float) = abs(a - b) < 1e-4f
 }
+
+class AnimatorTest {
+    private fun handY(a: dev.x360reborn.avatar.Animator, rig: dev.x360reborn.avatar.Rig, name: String) = a.worldP[3 * rig.names.getValue(name) + 1]
+
+    @Test fun ownAvatarSkinsToItsRestShapeAndWaveRaisesTheRightHand() {
+        val part = AvatarModel.buildRigged(AvatarLook.DEFAULT); val rig = AvatarModel.rig
+        val a = dev.x360reborn.avatar.Animator(rig)
+        // With no motion (time 0 idle terms are ~0) the skinned mesh matches the rest mesh closely.
+        a.pose(0f, 0f)
+        val pos = FloatArray(part.positions.size); val nrm = FloatArray(part.positions.size)
+        a.skin(part, pos, nrm)
+        var maxD = 0f
+        for (i in pos.indices) maxD = maxOf(maxD, kotlin.math.abs(pos[i] - part.positions[i]))
+        assertTrue("rest drift $maxD", maxD < 0.02f)
+        val restHand = handY(a, rig, "hand.R")
+        a.play(dev.x360reborn.avatar.Animator.Emote.WAVE, 0f)
+        a.pose(1.0f, 0.016f)
+        assertTrue("hand up", handY(a, rig, "hand.R") > rig.joints[3 * rig.names.getValue("head") + 1])
+        assertTrue(handY(a, rig, "hand.R") > restHand + 0.4f)
+        assertTrue(pos.all { it.isFinite() } && nrm.all { it.isFinite() })
+    }
+
+    @Test fun lookAtTurnsGraduallyAndEmotesEnd() {
+        val rig = AvatarModel.rig; val a = dev.x360reborn.avatar.Animator(rig)
+        a.lookAt = 1f
+        a.pose(0f, 0.016f)
+        val headX0 = a.worldP[3 * rig.names.getValue("hand.L")]
+        a.pose(0.5f, 0.5f)
+        val headX1 = a.worldP[3 * rig.names.getValue("hand.L")]
+        assertTrue("body turned", kotlin.math.abs(headX1 - headX0) > 0.02f)
+        a.play(dev.x360reborn.avatar.Animator.Emote.CHEER, 0f)
+        a.pose(5f, 0.016f)
+        assertTrue(!a.busy)
+    }
+}
