@@ -43,5 +43,12 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- The 3D avatar screen (TilePivot's own avatar, built in code). -->
+        <activity
+            android:name=".avatar.AvatarActivity"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
+            android:exported="false"
+            android:screenOrientation="fullUser" />
     </application>
 </manifest>

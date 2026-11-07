@@ -814,3 +814,97 @@ Emulator only (Medium_Phone_API_36.1, 1080x2400 portrait, release build;
   feature in the main working copy (Metrics.profileChip, Profile.kt,
   HomeView profile code -- not part of this release, and its uncommitted
   state was left exactly as found).
+
+## Avatar assets (2026-11-06, reference only)
+
+- `Guide.AvatarMiniCreator.avatarmc` XZP: 12 stock avatars, each as `avatar64NN.png`
+  (64x64 head-and-shoulders gamerpic on the blue sphere) + `avatarfbNN.png` (full body),
+  + `avatar_metadataNN.bin`. `AvatarEditor.MEDIA` XZP: 54 `gamerpic_background_N.png`
+  (large/small pairs) plus editor chrome. Collected into `re/out/avatar/` with contact sheets.
+- The 3D avatar data (`FFFE07DF00000002/AvatarAssetPack*.toc`, 14.7 MB + 1.2 MB) is a
+  header plus offset table followed by ~8.0 bit/byte payload, i.e. compressed or encrypted.
+  It is not decoded; `*.MsLiveAvatarAsset` (magic `STRB`) is the per-asset container.
+- None of this ships: it is Microsoft art. A TilePivot profile picture must be original
+  or user-supplied.
+
+## App v0.10.1 (2026-11-06): profile chip, 3D avatar, live home avatar
+
+- Two lines merge here. From feature/profile-chip (via integration/phone-avatar):
+  a profile chip in the clock strip, TilePivot's own code-built 3D avatar with
+  its own screen and a procedural animator, an optional user-supplied
+  avatar-pack hook, and a live 3D avatar standing in the home hero. From main:
+  0.9.0's vertical channel scrolling + settings gear and 0.9.1's flat
+  code-drawn hero figure, both unchanged (Scroll.kt / AvatarFigure.kt and
+  their tests are main's, byte for byte). The integration branch's 0.10.0
+  snapshot of the 0.9.1 work (5d9f1f2) is superseded by main's committed 0.9.1.
+- Profile chip (eabdfa6): [name][picture] left of the settings gear, after the
+  dash's MiniGamercard placement. Picture from the system photo picker (no
+  permission), centre-cropped to 256 px, kept as a private PNG (not part of
+  the JSON backup); the name lives in the hub prefs (profileName), so backups
+  carry it. With no picture, the chip shows an original code-drawn silhouette
+  (or the avatar headshot, below). Metrics.profileChip lays it out; narrow
+  strips drop the name first. A "profile" settings tile opens the same menu.
+- TilePivot's own 3D avatar (06f4b3a): an original, code-built 3D avatar
+  (ellipsoids and tapered tubes: big head, simple face, five hair styles,
+  top/bottoms/shoes) -- no console artwork. AvatarLook holds the choices in
+  the hub prefs as "avatarLook", so backups carry it. AvatarView is an
+  OpenGL ES 3 view (soft lambert + sky + rim light); AvatarActivity is the
+  full-screen avatar screen, opened from the profile chip menu ("Avatar...")
+  and a new "avatar" settings tile. AvatarSnapshot renders a software
+  z-buffered headshot (no GL) that the profile chip shows when no photo is
+  chosen, re-rendered when the look changes.
+- Animation (2c38a4a): Rig / SkinnedPart skeleton with named joints and a base
+  pose (up-to-4-bone skinned meshes); a procedural Animator -- idle (breathing,
+  weight shift, glances), one-shot emotes (wave, cheer, nod, shrug) with fade
+  in/out, smoothed body turn (lookAt) -- with forward kinematics + CPU
+  linear-blend skinning. AvatarRenderer is the GL drawing shared by surfaces;
+  the avatar screen is animated (tap to wave; Wave/Cheer buttons). Pack
+  outfits come back as skinned parts on one shared rig.
+- Avatar packs (0a43ca0): the avatar screen can render items from a pack the
+  user supplies WHEN a build includes a decoder. This repo ships no decoder
+  and no pack data: AvatarPacks.decoder is looked up by class name and is null
+  here, so public and Play builds show only TilePivot's own avatar.
+  build.gradle.kts compiles a private sibling folder in only with
+  -PwithAvatarPack, and bundle tasks refuse that flag, so a Play bundle can
+  never contain a decoder. (Pack material is Microsoft art and never ships;
+  see the "Avatar assets" research notes above.)
+- Live home avatar (20fbedf): AvatarOverlay, a transparent TextureView with
+  its own EGL/GLES3 thread sharing AvatarRenderer, stands on the home hero's
+  figure stage. HomeView reports the stage every frame (scroll offset,
+  transition scale/fade, focused tile centre) and skips the flat 2D figure
+  while the 3D avatar is on (drawHero: figure && !avatar3d) -- the two takes
+  coexist by that switch. MainActivity places the overlay on the stage, turns
+  the avatar toward the focused tile, waves when the home tile comes back
+  into view (at most every 20 s), cheers on app launch, and loads the user's
+  look on resume. Tap the avatar for a random emote; long-press opens the
+  avatar screen; touches beside the figure reach the hub. Settings gains
+  "home avatar: shown/hidden". AvatarRenderer.headroom keeps raised arms
+  in frame.
+- Merge surface: HomeView.kt (one call-site conflict, resolved for the
+  !avatar3d form), Metrics.kt (profileChip alongside settingsGearBox),
+  Model.kt (PROFILE glyph), MainActivity.kt (photo picker, profile menu,
+  overlay hosting), build.gradle.kts (version 0.10.1 / 22 + the
+  -PwithAvatarPack block).
+- Tests: 129 per variant (was 116 for 0.9.1), 0 failures/errors, counted
+  from test-results XML after a forced --rerun-tasks (Backup 4, Games 38,
+  HostPaths 7, Hub 50, Scroll 11, AvatarFigure 6, Profile 8, Avatar 3,
+  Animator 2). No dev.x360reborn.avatarpack.* suites appear in the default
+  build's results: the decoder is absent, as designed.
+- Emulator evidence (Medium_Phone_API_36.1, release build installed as an
+  update over 0.9.1; screenshots in the VM workspace, shots-0101/):
+  home.png -- the profile chip shows the avatar headshot beside the
+  settings gear, and the live 3D avatar stands on the home hero (the flat
+  figure is skipped, per the !avatar3d switch). avatar-screen.png -- the
+  full-screen avatar reached by long-pressing the home avatar, choice
+  buttons along the bottom. home-figure-2d.png -- after toggling the
+  "home avatar" settings tile to hidden, the hero falls back to 0.9.1's
+  flat code-drawn figure; the tile was returned to "shown" afterwards.
+  Settings also shows the new profile and avatar tiles. Logcat across
+  the whole drive: no FATAL EXCEPTION. The physical phone was not
+  touched.
+- Open work (from the avatar handoff): console pack animations (format
+  decoded; anim bone order differs from mesh skin order -- the mapping is
+  built in XAM/AvatarEditor code and is the blocker), exact face-feature
+  placement (currently estimated; the real compositor is in XAM), and heads
+  poking through some hats (the console's "Hiding Template" assets are
+  undecoded).

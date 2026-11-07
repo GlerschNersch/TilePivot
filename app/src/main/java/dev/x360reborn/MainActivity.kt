@@ -11,8 +11,10 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.UserHandle
+import android.provider.MediaStore
 import android.provider.Settings
 import android.text.Editable
+import android.text.InputFilter
 import android.text.TextWatcher
 import android.util.Log
 import android.view.WindowInsets
@@ -42,6 +44,7 @@ class MainActivity : Activity() {
     private lateinit var games: Games
     private lateinit var library: GameLibrary
     private lateinit var covers: Covers
+    private lateinit var profile: Profile
     private val loader = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
     private val launcherApps by lazy { getSystemService(LauncherApps::class.java) }
@@ -78,7 +81,21 @@ class MainActivity : Activity() {
         view.tileSize = apps.tileSize
         view.bgStyle = apps.bgStyle
         view.clock24h = apps.clock24h
-        setContentView(view)
+        profile = Profile(this)
+        view.profileName = profile.name
+        view.onProfile = ::profileOptions
+        loader.execute {
+            val pic = profile.loadPicture()
+            main.post { view.profilePicture = pic }
+        }
+        overlay = dev.x360reborn.avatar.AvatarOverlay(this) { openAvatar() }
+        setContentView(android.widget.FrameLayout(this).apply {
+            addView(view)
+            addView(this@MainActivity.overlay, android.widget.FrameLayout.LayoutParams(1, 1))
+        })
+        overlay.visibility = android.view.View.GONE
+        view.avatar3d = apps.homeAvatar
+        view.onAvatarStage = ::placeAvatar
         window.insetsController?.apply {
             hide(WindowInsets.Type.statusBars())
             systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
@@ -94,6 +111,11 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         main.post(clock)
+        refreshAvatarHead()
+        resumed = true
+        view.avatar3d = apps.homeAvatar
+        refreshAvatarScene()
+        view.invalidate()  // re-report the stage now that we are resumed
         // Coming back from something we launched: the hub flies back in (TransBackTo).
         if (leftForApp) {
             leftForApp = false
@@ -126,7 +148,65 @@ class MainActivity : Activity() {
         main.postDelayed(stillHere, HANDOFF_GUARD_MS)
     }
 
+    // ---- the live avatar on the home tile ------------------------------------------------------
+
+    private lateinit var overlay: dev.x360reborn.avatar.AvatarOverlay
+    private var resumed = false
+    private var stageShown = false
+    private var lastHomeWave = 0L
+    private var avatarSceneKey: String? = null
+
+    /** Follows the hub's figure stage every frame: position, fade, look toward the focused tile. */
+    private fun placeAvatar(st: dev.x360reborn.home.HomeView.AvatarStage?) {
+        val show = st != null && resumed && apps.homeAvatar
+        if (!show) {
+            if (overlay.visibility != android.view.View.GONE) overlay.visibility = android.view.View.GONE
+            overlay.active = false; stageShown = false; return
+        }
+        st!!
+        val w = st.width.toInt().coerceAtLeast(1); val h = st.height.toInt().coerceAtLeast(1)
+        val lp = overlay.layoutParams
+        if (lp.width != w || lp.height != h) { lp.width = w; lp.height = h; overlay.layoutParams = lp }
+        overlay.translationX = st.left; overlay.translationY = st.top; overlay.alpha = st.alpha
+        if (overlay.visibility != android.view.View.VISIBLE) overlay.visibility = android.view.View.VISIBLE
+        overlay.active = true
+        // Look toward the focused tile (screen right = turn right); straight ahead otherwise.
+        val cx = st.left + st.width / 2f
+        val yaw = if (st.focusX.isNaN()) 0f else ((st.focusX - cx) / st.width * 0.35f).coerceIn(-0.9f, 0.9f)
+        overlay.renderer.lookAt(yaw)
+        if (!stageShown) {
+            stageShown = true
+            val now = android.os.SystemClock.uptimeMillis()
+            if (now - lastHomeWave > 20_000) { lastHomeWave = now; overlay.renderer.emote(dev.x360reborn.avatar.Animator.Emote.WAVE) }
+        }
+    }
+
+    /** Loads the avatar the user set up (a pack outfit when this build reads packs, else TilePivot's own). */
+    private fun refreshAvatarScene() {
+        val prefs = getSharedPreferences("hub", MODE_PRIVATE)
+        val look = dev.x360reborn.avatar.AvatarLook.decode(prefs.getString(dev.x360reborn.avatar.AvatarActivity.PREF, null))
+        val outfit = dev.x360reborn.avatar.PackOutfit.decode(prefs.getString(dev.x360reborn.avatar.AvatarActivity.PREF_PACK, null))
+        val packFile = dev.x360reborn.avatar.AvatarPacks.file(filesDir)
+        val usePack = outfit.active && dev.x360reborn.avatar.AvatarPacks.decoder != null && packFile.isFile
+        val key = look.encode() + "|" + (if (usePack) outfit.encode() else "own")
+        if (key == avatarSceneKey) return
+        avatarSceneKey = key
+        loader.execute {
+            if (usePack) {
+                val model = runCatching {
+                    val pack = avatarPack ?: dev.x360reborn.avatar.AvatarPacks.decoder!!.open(packFile).also { avatarPack = it }
+                    pack.outfit(outfit.withDefaults(pack).items(pack), look.skinRgb(), look.hairRgb())
+                }.onFailure { Log.w(TAG, "home avatar pack failed", it) }.getOrNull()
+                if (model != null) { overlay.renderer.setScene(model.parts, model.rig); return@execute }
+            }
+            overlay.renderer.setScene(listOf(dev.x360reborn.avatar.AvatarModel.buildRigged(look)), dev.x360reborn.avatar.AvatarModel.rig)
+        }
+    }
+    @Volatile private var avatarPack: dev.x360reborn.avatar.AvatarPack? = null
+
     override fun onPause() {
+        resumed = false
+        overlay.active = false
         main.removeCallbacks(clock)
         main.removeCallbacks(stillHere)
         super.onPause()
@@ -222,6 +302,7 @@ class MainActivity : Activity() {
     private fun launch(tile: Tile, bounds: android.graphics.Rect) {
         when (val t = tile.target) {
             is Target.App -> {
+                if (overlay.active) overlay.renderer.emote(dev.x360reborn.avatar.Animator.Emote.CHEER)
                 // The hub is already hidden (TransFrom), so every early exit must bring it back.
                 val cn = apps.component(t.key)
                 val user = apps.user(t.key)
@@ -253,6 +334,15 @@ class MainActivity : Activity() {
                 openSearch("")
             } else if (t.name == Apps.ACTION_XBOX) {
                 gameLibrary()
+            } else if (t.name == Apps.ACTION_PROFILE) {
+                profileOptions()
+            } else if (t.name == Apps.ACTION_HOME_AVATAR) {
+                apps.homeAvatar = !apps.homeAvatar
+                view.avatar3d = apps.homeAvatar
+                Toast.makeText(this, "Home avatar: ${if (apps.homeAvatar) "shown" else "hidden"}", Toast.LENGTH_SHORT).show()
+                reload()
+            } else if (t.name == Apps.ACTION_AVATAR) {
+                openAvatar()
             } else if (t.name == Apps.ACTION_THEME) {
                 themePicker()
             } else if (t.name == Apps.ACTION_BG) {
@@ -368,6 +458,7 @@ class MainActivity : Activity() {
             REQ_BACKUP -> saveBackup(uri)
             REQ_RESTORE -> confirmRestore(uri)
             REQ_GAME_FOLDER -> addGameFolder(uri)
+            REQ_PROFILE_PICTURE -> setProfilePicture(uri)
         }
     }
 
@@ -482,6 +573,89 @@ class MainActivity : Activity() {
             val n = games.found
             main.post { Toast.makeText(this, "$n Xbox 360 games found", Toast.LENGTH_SHORT).show() }
         }
+    }
+
+    /** The profile chip's menu: picture from the user's photos, remove it, or set the name. */
+    private fun profileOptions() {
+        val labels = ArrayList<String>()
+        val actions = ArrayList<() -> Unit>()
+        labels += "Avatar…"
+        actions += ::openAvatar
+        labels += "Choose picture…"
+        actions += ::pickProfilePicture
+        if (view.profilePicture != null) {
+            labels += "Remove picture"
+            actions += {
+                loader.execute { profile.clearPicture() }
+                view.profilePicture = null
+            }
+        }
+        labels += if (profile.name.isEmpty()) "Set name…" else "Change name…"
+        actions += ::profileNameDialog
+        AlertDialog.Builder(this)
+            .setTitle(profile.name.ifEmpty { "Profile" })
+            .setItems(labels.toTypedArray()) { _, which -> actions.getOrNull(which)?.invoke() }
+            .show()
+    }
+
+    /** The 3D avatar screen; the hub plays its leave transition and comes back on return. */
+    private fun openAvatar() {
+        startActivity(Intent(this, dev.x360reborn.avatar.AvatarActivity::class.java),
+            ActivityOptions.makeCustomAnimation(this, android.R.anim.fade_in, 0).toBundle())
+        handedOff()
+    }
+
+    /** The look the chip's head was last rendered for; re-rendered when it changes (see onResume). */
+    private var avatarShown: String? = null
+
+    /** Renders the avatar's head for the profile chip off the main thread (used when no photo is set). */
+    private fun refreshAvatarHead() {
+        val enc = getSharedPreferences("hub", MODE_PRIVATE).getString(dev.x360reborn.avatar.AvatarActivity.PREF, null)
+        if (enc == avatarShown && view.profileAvatar != null) return
+        avatarShown = enc
+        val look = dev.x360reborn.avatar.AvatarLook.decode(enc)
+        loader.execute {
+            val size = 128
+            val px = dev.x360reborn.avatar.AvatarSnapshot.headshot(dev.x360reborn.avatar.AvatarModel.build(look), size)
+            val bmp = android.graphics.Bitmap.createBitmap(px, size, size, android.graphics.Bitmap.Config.ARGB_8888)
+            main.post { view.profileAvatar = bmp }
+        }
+    }
+
+    /** The system photo picker: no permission, and TilePivot only ever sees the one photo picked. */
+    private fun pickProfilePicture() {
+        pickFile(Intent(MediaStore.ACTION_PICK_IMAGES).setType("image/*"), REQ_PROFILE_PICTURE)
+    }
+
+    private fun setProfilePicture(uri: Uri) {
+        loader.execute {
+            val pic = profile.setPicture(uri)
+            main.post {
+                if (pic == null) Toast.makeText(this, "Couldn't use that picture", Toast.LENGTH_LONG).show()
+                else view.profilePicture = pic
+            }
+        }
+    }
+
+    private fun profileNameDialog() {
+        val input = EditText(this).apply {
+            hint = "Your name"
+            setSingleLine(true)
+            filters = arrayOf(InputFilter.LengthFilter(Profile.MAX_NAME))
+            setText(profile.name)
+            setSelection(length())
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Profile name")
+            .setView(input)
+            .setPositiveButton("OK") { _, _ ->
+                // An empty name is allowed: it clears the name and the chip shows just the picture.
+                profile.name = input.text.toString()
+                view.profileName = profile.name
+                reload() // the settings tile shows the name
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     /** Search dialog: a text field over a live-filtered list of apps; tapping one launches it. */
@@ -637,6 +811,7 @@ class MainActivity : Activity() {
         const val REQ_BACKUP = 1
         const val REQ_RESTORE = 2
         const val REQ_GAME_FOLDER = 3
+        const val REQ_PROFILE_PICTURE = 4
         /** Xendroid+'s emulator launch action (EmulatorHostActivity). */
         const val ACTION_XENDROID = "xendroid.intent.action.xendroid"
         /** Release builds install as .fork; the plain package is the suffix-overridden build. */
