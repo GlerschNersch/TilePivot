@@ -770,3 +770,47 @@ Emulator only (Medium_Phone_API_36.1, 1080x2400 portrait, release build;
   gear drawn dimmed there (v1_home.png -> v2_gear.png).
 - Logcat across the whole drive: no FATAL EXCEPTION, no dev.tilepivot crash
   lines. The physical phone was not touched.
+
+## App v0.9.1 (2026-11-06): a code-drawn player figure in the home hero
+
+- The home channel's hero gains a small standing player figure, evoking the
+  dash's staged avatar: it stands on a soft floor ellipse at the right of
+  the hero, over the art, clear of the name/sub text at bottom-left. Home
+  channel only; no other hero changes.
+- Clean-room: the figure is original geometry drawn in code
+  (home/AvatarFigure.kt for the layout, HomeView.drawAvatarFigure for the
+  shapes) -- chunky proportions, a plain featureless head, capsule limbs,
+  two-tone clothing from the active theme's tile accent (a darker shade
+  for legs and waistband, a lighter chest band), one neutral skin tone,
+  near-black shoes. No extracted asset is used or reproduced: the
+  re/out/avatar material stayed research reference for how the dash staged
+  its figure (right side, standing on a floor area), nothing more.
+- Presentation-only: not a tile, not focusable or clickable, absent from
+  the hub model, search, folders and backups, and invisible to TalkBack.
+  It is drawn in one static pass inside drawHero -- no animation loop and
+  no extra invalidations (deliberate: a launcher hero should cost nothing
+  while idle).
+- Geometry is pure (the Scroll.kt pattern): the figure takes the hero's
+  right quarter and 58% of its height; the whole footprint, floor
+  included, ends LABEL_GAP (10) above a label zone of LABEL_H (64, which
+  is Metrics.HERO_BLOCK_SUB), so it can never reach the hero text.
+  AvatarFigureTest (6 tests) pins: inside the canonical heroes (portrait
+  SMALL/MEDIUM/LARGE, the landscape Template1HD hero, 708x352.7), clear
+  of the label zone with the exact gap, feet on the floor's centre line,
+  parts inside the body, a plain circular head centred over the torso,
+  and scale-invariant proportions (sizes scale; vertical placement is
+  anchored to the fixed label height, so offsets are checked relative to
+  the body). Tests: 116 per variant (was 110), 0 failures.
+- Emulator evidence (Medium_Phone_API_36.1, release build; screenshots in
+  the VM workspace, shots-avatar/): home-xbox-green.png -- the figure
+  stands at the hero's right in Xbox Green, and the hero's centred app
+  art ends before the figure begins, so the backing disc/podium the brief
+  allowed for was not needed. home-carbon.png -- Carbon greys; the legs
+  are low-contrast against the hero's dark flank, and the head and chest
+  band carry the read. home-landscape.png -- the Template1HD hero, same
+  staging. Logcat: no FATAL EXCEPTION. The physical phone was not touched.
+- Process note: this build was made in a temporary git worktree off
+  99ebc26, because a parallel session was mid-edit on a profile-chip
+  feature in the main working copy (Metrics.profileChip, Profile.kt,
+  HomeView profile code -- not part of this release, and its uncommitted
+  state was left exactly as found).
