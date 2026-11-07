@@ -149,6 +149,19 @@ class HomeView(
     /** Per-slot wave delays for [cascadePage], computed when the cascade starts. */
     private var cascadeDelays = FloatArray(0)
 
+    // Vertical grid scroll (0.9.0): one scrollable page per channel. Offsets and the
+    // focused slot are remembered per channel and restored on return; the hero
+    // never scrolls -- only the grid region under it moves.
+    private val vOffsets = HashMap<Int, Float>()
+    private val channelFocus = HashMap<Int, Int>()
+    private var vAnimFrom = 0f
+    private var vAnimTo = 0f
+    private var vAnimStart = -1L
+    private var vAnimPage = -1
+    private var vFlingVel = 0f
+    private var vFlingPage = -1
+    private var lastVStep = 0L
+
     private var focusPage = 0
     private var focusSlot = 1
     private var twistFocused = false
@@ -193,6 +206,11 @@ class HomeView(
         val c = next.channels[ch]
         focusPage = c.firstPage + min(inPage, c.pageCount - 1)
         if (relaid || !next.pages[focusPage].focusable(focusSlot)) focusSlot = defaultSlot(focusPage)
+        // Scroll memory belongs to the old hub's pages; drop what the new hub lacks.
+        vOffsets.keys.retainAll(next.pages.indices.toSet())
+        channelFocus.keys.retainAll(next.channels.indices.toSet())
+        vAnimStart = -1; vFlingPage = -1
+        if (relaid) revealSlot(focusPage, focusSlot, animate = false)
         scroll = focusPage * L.w
         scrollStart = -1
         focusAnim.clear()
@@ -411,9 +429,78 @@ class HomeView(
         return page * L.w - scroll + (L.w - t.w) / 2f
     }
 
-    private fun pageY(page: Int): Float {
+    // ---- vertical grid scroll (0.9.0) ---------------------------------------------------
+
+    /** Height of the scroll viewport on [page]: the panel region below the fixed hero. */
+    private fun viewportH(page: Int) = L.panelsH - hub.pages[page].template.gridTop
+
+    /** How far [page]'s grid may scroll: its content overflow past the viewport. */
+    private fun maxVOff(page: Int): Float {
         val t = hub.pages[page].template
-        return L.panelsY + (L.panelsH - t.h) / 2f
+        return Scroll.maxOffset(t.h - t.gridTop, viewportH(page))
+    }
+
+    /** [page]'s current scroll offset, always inside its legal range. */
+    private fun vOff(page: Int) = Scroll.clampOffset(vOffsets[page] ?: 0f, maxVOff(page))
+
+    private fun setVOff(page: Int, value: Float) {
+        vOffsets[page] = Scroll.clampOffset(value, maxVOff(page))
+    }
+
+    /** True when [slot] on [page] lives in the scrolling grid (not the fixed hero). */
+    private fun isGridSlot(page: Int, slot: Int) = slot != hub.pages[page].template.hero
+
+    /**
+     * Steps the reveal animation and the fling; true while either is still moving.
+     * The fling decays exponentially and stops dead at the edges -- no rubber band,
+     * per the 0.9.0 gesture rules.
+     */
+    private fun stepVScroll(now: Long): Boolean {
+        var moving = false
+        if (vAnimStart >= 0) {
+            val t = (now - vAnimStart) / V_REVEAL_MS
+            if (t >= 1f) {
+                setVOff(vAnimPage, vAnimTo)
+                vAnimStart = -1
+            } else {
+                setVOff(vAnimPage, vAnimFrom + (vAnimTo - vAnimFrom) * Motion.easeOut(t))
+                moving = true
+            }
+        }
+        if (vFlingPage >= 0) {
+            val dt = if (lastVStep == 0L) 16f else min(64f, (now - lastVStep).toFloat())
+            val next = vOff(vFlingPage) + vFlingVel * dt / 1000f
+            val clamped = Scroll.clampOffset(next, maxVOff(vFlingPage))
+            setVOff(vFlingPage, clamped)
+            vFlingVel *= Math.pow(0.5, (dt / V_FLING_HALF_MS).toDouble()).toFloat()
+            if (clamped != next || abs(vFlingVel) < V_FLING_STOP) vFlingPage = -1 else moving = true
+        }
+        lastVStep = now
+        return moving
+    }
+
+    /**
+     * Scrolls [page] the minimum amount that shows [slot] in full (no move when it
+     * is already fully visible). The hero and non-focusable slots never scroll.
+     */
+    private fun revealSlot(page: Int, slot: Int, animate: Boolean) {
+        val p = hub.pages.getOrNull(page) ?: return
+        if (!isGridSlot(page, slot) || !p.focusable(slot)) return
+        val b = p.template.slots[slot]
+        val gt = p.template.gridTop
+        val target = Scroll.revealOffset(vOff(page), b.y - gt, b.bottom - gt, viewportH(page), maxVOff(page))
+        if (target == vOff(page)) return
+        vFlingPage = -1
+        if (animate) {
+            vAnimFrom = vOff(page)
+            vAnimTo = target
+            vAnimPage = page
+            vAnimStart = SystemClock.uptimeMillis()
+        } else {
+            vAnimStart = -1
+            setVOff(page, target)
+        }
+        invalidate()
     }
 
     /** Continuous channel index under the current scroll, for the twist and the aura pan. */
@@ -435,6 +522,7 @@ class HomeView(
         val dt = if (lastFrame == 0L) 16f else min(64f, (now - lastFrame).toFloat())
         lastFrame = now
         var animating = stepScroll(now)
+        animating = stepVScroll(now) || animating
         animating = stepFocus(dt) || animating
         animating = stepChrome(dt) || animating
         animating = stepCascade(now) || animating
@@ -478,6 +566,7 @@ class HomeView(
         drawTwist(canvas, cp, now)
         if (transforming) canvas.restore()
         canvas.drawText(hubClock(), L.clockX, L.clockY, clockText)
+        drawGear(canvas)
         drawHoverChrome(canvas)
         canvas.restore()
 
@@ -543,7 +632,7 @@ class HomeView(
     private fun drawPage(canvas: Canvas, page: Int, now: Long) {
         val p = hub.pages[page]
         val x0 = pageX(page)
-        val y0 = pageY(page)
+        val top = L.panelsY
         // Settings tiles are controls whose labels carry state ("theme: Midnight"), so
         // the settings channel keeps the classic icon-over-label rendering (drawSmall).
         val labeled = hub.channels[p.channel].title == "settings"
@@ -554,11 +643,33 @@ class HomeView(
         // Draw the focused tile last so its 1.08x growth overlaps its neighbours.
         var focusedLast = -1
         for (i in p.tiles.indices) {
-            if (!p.focusable(i)) continue
-            if ((focusAnim[key(page, i)] ?: 0f) > 0f) { focusedLast = i; continue }
-            drawTile(canvas, p.tiles[i], p.template.slots[i], x0, y0, key(page, i), now, labeled, delay(i), entryMs)
+            if (p.focusable(i) && (focusAnim[key(page, i)] ?: 0f) > 0f) focusedLast = i
         }
-        if (focusedLast >= 0) drawTile(canvas, p.tiles[focusedLast], p.template.slots[focusedLast], x0, y0, key(page, focusedLast), now, labeled, delay(focusedLast), entryMs)
+        val gt = p.template.gridTop
+        val off = vOff(page)
+        // The scrolling grid, clipped to the panel region under the fixed hero; rows
+        // that cannot reach the viewport are culled (plus slack for growth/shadow).
+        canvas.save()
+        canvas.clipRect(x0, top + gt, x0 + p.template.w, top + L.panelsH)
+        for (i in p.tiles.indices) {
+            if (!p.focusable(i) || i == focusedLast || !isGridSlot(page, i)) continue
+            val b = p.template.slots[i]
+            if (b.bottom - off < gt - CULL_SLACK || b.y - off > L.panelsH + CULL_SLACK) continue
+            drawTile(canvas, p.tiles[i], b, x0, top - off, key(page, i), now, labeled, delay(i), entryMs)
+        }
+        if (focusedLast >= 0 && isGridSlot(page, focusedLast)) {
+            val i = focusedLast
+            drawTile(canvas, p.tiles[i], p.template.slots[i], x0, top - off, key(page, i), now, labeled, delay(i), entryMs)
+        }
+        canvas.restore()
+        // The hero, fixed at the top of the panel: it never scrolls, never clips.
+        val hero = p.template.hero
+        if (hero >= 0 && p.focusable(hero) && hero != focusedLast) {
+            drawTile(canvas, p.tiles[hero], p.template.slots[hero], x0, top, key(page, hero), now, labeled, delay(hero), entryMs)
+        }
+        if (focusedLast == hero && hero >= 0) {
+            drawTile(canvas, p.tiles[hero], p.template.slots[hero], x0, top, key(page, hero), now, labeled, delay(hero), entryMs)
+        }
     }
 
     private fun drawTile(canvas: Canvas, tile: Tile, b: Box, x0: Float, y0: Float, k: Int, now: Long, labeled: Boolean, entryDelayMs: Float = -1f, entryElapsedMs: Float = 0f) {
@@ -810,20 +921,7 @@ class HomeView(
                     canvas.drawRect(cx, cy, cx + cell * 0.85f, cy + cell * 0.85f, fill)
                 }
             }
-            Glyph.SETTINGS -> {
-                val cx = x + size / 2f
-                val cy = y + size / 2f
-                fill.style = Paint.Style.STROKE
-                fill.strokeWidth = size * 0.12f
-                canvas.drawCircle(cx, cy, size * 0.26f, fill)
-                fill.style = Paint.Style.FILL
-                for (i in 0 until 8) {
-                    canvas.save()
-                    canvas.rotate(i * 45f, cx, cy)
-                    canvas.drawRect(cx - size * 0.07f, cy - size * 0.46f, cx + size * 0.07f, cy - size * 0.3f, fill)
-                    canvas.restore()
-                }
-            }
+            Glyph.SETTINGS -> drawGearGlyph(canvas, x + size / 2f, y + size / 2f, size)
             Glyph.SEARCH -> {
                 // Magnifier: stroked circle with a handle running down-right.
                 val cx = x + size * 0.42f
@@ -954,6 +1052,41 @@ class HomeView(
         twistText.alpha = 255
     }
 
+    /** The settings channel's index, or -1 when the hub has none (it always does). */
+    private fun settingsIndex() = hub.channels.indexOfFirst { it.title == "settings" }
+
+    /** The settings gear's hit box in design space (see [Metrics.settingsGearBox]). */
+    private fun gearBox(): Box =
+        Metrics.settingsGearBox(L.clockX, L.clockY, clockText.measureText(hubClock()))
+
+    /**
+     * The persistent settings shortcut (0.9.0, tester feedback): a gear in the clock
+     * strip, left of the clock, visible on every channel. On the settings channel
+     * itself it is drawn dimmed and tapping it does nothing. Pointer and TalkBack
+     * only -- it is never in the DPAD focus order.
+     */
+    private fun drawGear(canvas: Canvas) {
+        val gb = gearBox()
+        fill.color = Metrics.TEXT
+        fill.alpha = if (hub.channelOf(focusPage) == settingsIndex()) GEAR_DIM_ALPHA else 235
+        drawGearGlyph(canvas, gb.cx, gb.cy, Metrics.GEAR_GLYPH)
+        fill.alpha = 255
+    }
+
+    /** The gear glyph, shared by the top-strip shortcut and the settings tiles. */
+    private fun drawGearGlyph(canvas: Canvas, cx: Float, cy: Float, size: Float) {
+        fill.style = Paint.Style.STROKE
+        fill.strokeWidth = size * 0.12f
+        canvas.drawCircle(cx, cy, size * 0.26f, fill)
+        fill.style = Paint.Style.FILL
+        for (i in 0 until 8) {
+            canvas.save()
+            canvas.rotate(i * 45f, cx, cy)
+            canvas.drawRect(cx - size * 0.07f, cy - size * 0.46f, cx + size * 0.07f, cy - size * 0.3f, fill)
+            canvas.restore()
+        }
+    }
+
     // ---- animation ---------------------------------------------------------------------------
 
     private fun stepScroll(now: Long): Boolean {
@@ -996,8 +1129,25 @@ class HomeView(
         cascadePage = page
         cascadeStart = SystemClock.uptimeMillis()
         val p = hub.pages[page]
-        // Delays are fixed for the run, so work them out once rather than per tile per frame.
-        cascadeDelays = FloatArray(p.template.slots.size) { entryDelay(p.template, it) }
+        // Delays are fixed for the run, so work them out once rather than per tile per
+        // frame. The wave runs over the rows visible at the landing scroll offset;
+        // tiles below the fold sit at rest (delay -1) until scrolled into view.
+        val gridSlots = p.template.slots.filterIndexed { i, _ -> i != p.template.hero }
+        val rowTops = gridSlots.map { it.y }.distinct().sorted()
+        val colLefts = gridSlots.map { it.x }.distinct().sorted()
+        val tileH = gridSlots.firstOrNull()?.h ?: 0f
+        val gutterY = if (rowTops.size > 1) rowTops[1] - rowTops[0] - tileH else 0f
+        val firstRow = if (rowTops.isNotEmpty() && tileH > 0f && viewportH(page) > 0f)
+            Scroll.visibleRows(vOff(page), viewportH(page), tileH, gutterY, rowTops.size).first
+            else 0
+        cascadeDelays = FloatArray(p.template.slots.size) { slot ->
+            if (slot == p.template.hero) 0f
+            else {
+                val b = p.template.slots[slot]
+                val row = rowTops.indexOf(b.y)
+                if (row < firstRow) -1f else Anim.delayFor(row - firstRow, colLefts.indexOf(b.x))
+            }
+        }
         var maxDelay = 0f
         for (i in p.tiles.indices) if (p.focusable(i)) maxDelay = max(maxDelay, cascadeDelays[i])
         cascadeTotal = Anim.totalMs(maxDelay)
@@ -1014,15 +1164,6 @@ class HomeView(
     /** Cascade clock: wall time since the entry, stretched by the system duration scale. */
     private fun cascadeElapsed(now: Long) = (now - cascadeStart) / cascadeScale
 
-    /** Diagonal-wave delay for [slot] on template [t]: (row + column) steps, hero first. */
-    private fun entryDelay(t: Template, slot: Int): Float {
-        if (slot == t.hero) return 0f
-        val b = t.slots[slot]
-        val row = t.slots.map { it.y }.distinct().count { it < b.y }
-        val col = t.slots.map { it.x }.distinct().count { it < b.x }
-        return Anim.delayFor(row, col)
-    }
-
     private fun animateScrollTo(page: Int) {
         scrollFrom = scroll
         scrollTo = page * L.w
@@ -1031,22 +1172,34 @@ class HomeView(
     }
 
     private fun goToPage(page: Int, slot: Int) {
-        // The cascade fires only on a genuine channel change: within-channel paging
-        // (a swipe or DPAD step across a channel's own pages) never re-triggers it.
+        // The cascade fires only on a genuine channel change (0.9.0: one page per
+        // channel, so every page change is a channel change).
         val channelChanged = page in hub.pages.indices && focusPage in hub.pages.indices &&
             hub.channelOf(page) != hub.channelOf(focusPage)
+        if (channelChanged) {
+            // Remember where the old channel was left: its focus (the scroll offset
+            // is already per-page in vOffsets and simply stays).
+            channelFocus[hub.channelOf(focusPage)] = focusSlot
+            vAnimStart = -1
+            vFlingPage = -1
+        }
         focusPage = page
         focusSlot = slot
         twistFocused = false
         animateScrollTo(page)
+        // Land showing the focused tile before the cascade measures its wave.
+        if (channelChanged) revealSlot(page, slot, animate = false)
         if (channelChanged) startCascade(page)
         a11yTreeChanged()
         a11yFocusMoved()
     }
 
     private fun goToChannel(ch: Int, keepTwist: Boolean) {
-        val c = hub.channels[ch.coerceIn(0, hub.channels.size - 1)]
-        goToPage(c.firstPage, defaultSlot(c.firstPage))
+        val idx = ch.coerceIn(0, hub.channels.size - 1)
+        val c = hub.channels[idx]
+        // A channel remembers its focused tile across visits (0.9.0).
+        val remembered = channelFocus[idx]?.takeIf { hub.pages[c.firstPage].focusable(it) }
+        goToPage(c.firstPage, remembered ?: defaultSlot(c.firstPage))
         if (keepTwist) { twistFocused = true }
         playSoundEffect(SoundEffectConstants.NAVIGATION_RIGHT)
     }
@@ -1068,7 +1221,7 @@ class HomeView(
     private var a11yHover = NO_VIRTUAL
 
     private fun isTileId(id: Int) = id in TILE_BASE until TWIST_BASE
-    private fun isTwistId(id: Int) = id >= TWIST_BASE
+    private fun isTwistId(id: Int) = id in TWIST_BASE until GEAR_ID
 
     /** Spoken name for [tile]: what it is, plus the state the screen shows beside it. */
     private fun describe(tile: Tile): String = when {
@@ -1087,6 +1240,7 @@ class HomeView(
     }
 
     private fun describeId(id: Int): String? = when {
+        id == GEAR_ID -> "Settings"
         isTileId(id) -> tileAt(id)?.let(::describe)
         isTwistId(id) -> hub.channels.getOrNull(id - TWIST_BASE)?.title
         else -> null
@@ -1102,8 +1256,14 @@ class HomeView(
         val (dx, dy, w, h) = when {
             isTileId(id) -> {
                 val p = hub.pages.getOrNull(focusPage) ?: return false
-                val b = p.template.slots.getOrNull(id - TILE_BASE) ?: return false
-                floatArrayOf((L.w - p.template.w) / 2f + b.x, pageY(focusPage) + b.y, b.w, b.h)
+                val slot = id - TILE_BASE
+                val b = p.template.slots.getOrNull(slot) ?: return false
+                val dy = L.panelsY + b.y - if (isGridSlot(focusPage, slot)) vOff(focusPage) else 0f
+                floatArrayOf((L.w - p.template.w) / 2f + b.x, dy, b.w, b.h)
+            }
+            id == GEAR_ID -> {
+                val gb = gearBox()
+                floatArrayOf(gb.x, gb.y, gb.w, gb.h)
             }
             isTwistId(id) -> {
                 val i = id - TWIST_BASE
@@ -1129,6 +1289,7 @@ class HomeView(
         val ids = ArrayList<Int>()
         val r = Rect()
         for (i in hub.channels.indices) if (a11yBounds(TWIST_BASE + i, r)) ids += TWIST_BASE + i
+        ids += GEAR_ID
         val p = hub.pages.getOrNull(focusPage) ?: return ids
         val order = p.template.slots.indices.filter { p.focusable(it) }
             .sortedWith(compareBy({ p.template.slots[it].y }, { p.template.slots[it].x }))
@@ -1143,13 +1304,12 @@ class HomeView(
                 onInitializeAccessibilityNodeInfo(info)
                 for (child in a11yChildren()) info.addChild(this@HomeView, child)
                 val ch = hub.channels.getOrNull(hub.channelOf(focusPage))
-                if (ch != null) {
-                    val inPage = focusPage - ch.firstPage + 1
-                    info.stateDescription = if (ch.pageCount > 1) "${ch.title}, page $inPage of ${ch.pageCount}" else ch.title
-                }
-                info.isScrollable = hub.pages.size > 1
-                if (focusPage < hub.pages.size - 1) info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_FORWARD)
-                if (focusPage > 0) info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_BACKWARD)
+                if (ch != null) info.stateDescription = ch.title
+                info.isScrollable = hub.pages.size > 1 || maxVOff(focusPage) > 0f
+                if (vOff(focusPage) < maxVOff(focusPage) || focusPage < hub.pages.size - 1)
+                    info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_FORWARD)
+                if (vOff(focusPage) > 0f || focusPage > 0)
+                    info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_BACKWARD)
                 return info
             }
             val text = describeId(id) ?: return null
@@ -1166,7 +1326,10 @@ class HomeView(
             n.isFocusable = true
             n.isClickable = true
             n.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_CLICK)
-            if (isTwistId(id)) {
+            if (id == GEAR_ID) {
+                n.stateDescription = "shortcut"
+                if (hub.channelOf(focusPage) == settingsIndex()) n.isEnabled = false
+            } else if (isTwistId(id)) {
                 val current = id - TWIST_BASE == hub.channelOf(focusPage)
                 n.isSelected = current
                 n.isHeading = current
@@ -1190,8 +1353,8 @@ class HomeView(
         override fun performAction(id: Int, action: Int, args: Bundle?): Boolean {
             if (id == HOST_VIEW_ID) {
                 return when (action) {
-                    AccessibilityNodeInfo.ACTION_SCROLL_FORWARD -> a11yPage(1)
-                    AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD -> a11yPage(-1)
+                    AccessibilityNodeInfo.ACTION_SCROLL_FORWARD -> a11yScroll(1)
+                    AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD -> a11yScroll(-1)
                     else -> performAccessibilityAction(action, args)
                 }
             }
@@ -1203,7 +1366,11 @@ class HomeView(
                     a11yFocus = id
                     if (old != NO_VIRTUAL) a11yEvent(old, AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUS_CLEARED)
                     // The visual focus follows the reader, so the focused tile lights up.
-                    if (isTileId(id)) { focusSlot = id - TILE_BASE; twistFocused = false; invalidate() }
+                    if (isTileId(id)) {
+                        focusSlot = id - TILE_BASE; twistFocused = false
+                        revealSlot(focusPage, focusSlot, animate = true)
+                        invalidate()
+                    }
                     a11yEvent(id, AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED)
                     true
                 }
@@ -1215,8 +1382,11 @@ class HomeView(
                 }
                 AccessibilityNodeInfo.ACTION_CLICK -> {
                     if (away) return false
-                    if (isTwistId(id)) goToChannel(id - TWIST_BASE, false)
-                    else { focusSlot = id - TILE_BASE; twistFocused = false; activate(focusPage, focusSlot) }
+                    when {
+                        id == GEAR_ID -> settingsIndex().takeIf { it >= 0 }?.let { goToChannel(it, false) }
+                        isTwistId(id) -> goToChannel(id - TWIST_BASE, false)
+                        else -> { focusSlot = id - TILE_BASE; twistFocused = false; activate(focusPage, focusSlot) }
+                    }
                     a11yEvent(id, AccessibilityEvent.TYPE_VIEW_CLICKED)
                     true
                 }
@@ -1247,7 +1417,27 @@ class HomeView(
     private fun hasOptions(tile: Tile) =
         tile.target is Target.App || (tile.target is Target.Channel && tile.folderId != null)
 
-    /** Reader scroll: one page along the horizon, then put the reader on that page's default tile. */
+    /**
+     * Reader scroll (0.9.0): scrolls the current channel's grid by most of a
+     * viewport; at the grid's end it falls through to the next channel, as the
+     * old horizon page scroll did.
+     */
+    private fun a11yScroll(dir: Int): Boolean {
+        if (away) return false
+        val max = maxVOff(focusPage)
+        val cur = vOff(focusPage)
+        val target = Scroll.clampOffset(cur + dir * viewportH(focusPage) * 0.9f, max)
+        if (target != cur) {
+            vFlingPage = -1
+            vAnimFrom = cur; vAnimTo = target; vAnimPage = focusPage
+            vAnimStart = SystemClock.uptimeMillis()
+            invalidate()
+            return true
+        }
+        return a11yPage(dir)
+    }
+
+    /** Reader channel move: one channel along the pivot, reader landing on its default tile. */
     private fun a11yPage(step: Int): Boolean {
         val target = focusPage + step
         if (away || target !in hub.pages.indices) return false
@@ -1348,6 +1538,13 @@ class HomeView(
         return true
     }
 
+    /** Focusable slots of the current page in reading order (rows, then columns). */
+    private fun readingOrder(): List<Int> {
+        val p = hub.pages[focusPage]
+        return p.template.slots.indices.filter { p.focusable(it) }
+            .sortedWith(compareBy({ p.template.slots[it].y }, { p.template.slots[it].x }))
+    }
+
     private fun move(dx: Int, dy: Int) {
         if (twistFocused) {
             when {
@@ -1360,16 +1557,28 @@ class HomeView(
         val boxes = p.template.slots
         val next = if (p.focusable(focusSlot)) Nav.move(boxes, p::focusable, focusSlot, dx, dy) else -1
         when {
-            next >= 0 -> { focusSlot = next; playSoundEffect(SoundEffectConstants.CLICK); invalidate(); a11yFocusMoved() }
+            next >= 0 -> {
+                focusSlot = next
+                revealSlot(focusPage, next, animate = true)
+                playSoundEffect(SoundEffectConstants.CLICK)
+                invalidate()
+                a11yFocusMoved()
+            }
             dy < 0 -> { twistFocused = true; twistFocusStart = SystemClock.uptimeMillis(); invalidate() }
             dx != 0 -> {
-                val target = focusPage + dx
-                if (target !in hub.pages.indices) return
-                val y = if (p.focusable(focusSlot)) boxes[focusSlot].cy else 0f
-                val tp = hub.pages[target]
-                val slot = Nav.enter(tp.template.slots, tp::focusable, dx > 0, y)
-                goToPage(target, if (slot >= 0) slot else 0)
-                playSoundEffect(if (dx > 0) SoundEffectConstants.NAVIGATION_RIGHT else SoundEffectConstants.NAVIGATION_LEFT)
+                // Row edge (0.9.0): left/right wrap through the reading order -- the
+                // previous row's last tile / the next row's first tile -- instead of
+                // paging or crossing channels. Channel changes via keys are
+                // PAGE_UP/PAGE_DOWN and the bumpers now.
+                val order = readingOrder()
+                val wrapped = order.getOrNull(order.indexOf(focusSlot) + dx)
+                if (wrapped != null) {
+                    focusSlot = wrapped
+                    revealSlot(focusPage, wrapped, animate = true)
+                    playSoundEffect(SoundEffectConstants.CLICK)
+                    invalidate()
+                    a11yFocusMoved()
+                }
             }
         }
     }
@@ -1393,7 +1602,7 @@ class HomeView(
             else -> {
                 val b = p.template.slots[slot]
                 val x = ox + (pageX(page) + b.x) * s
-                val y = oy + (pageY(page) + b.y) * s
+                val y = oy + (L.panelsY + b.y - if (isGridSlot(page, slot)) vOff(page) else 0f) * s
                 val r = Rect(x.roundToInt(), y.roundToInt(), (x + b.w * s).roundToInt(), (y + b.h * s).roundToInt())
                 // Let the press dip register before the app covers the hub.
                 // Press dip, then the hub's TransFrom zoom; the app starts partway through it.
@@ -1420,7 +1629,21 @@ class HomeView(
         /** Accessibility virtual-view ids: tiles are TILE_BASE + slot, channels TWIST_BASE + index. */
         const val TILE_BASE = 0
         const val TWIST_BASE = 10_000
+        /** The settings gear's accessibility id (kept clear of the twist range). */
+        const val GEAR_ID = 20_000
         const val NO_VIRTUAL = Int.MIN_VALUE
+        /** Reveal-scroll animation length (focus moves, reader scrolls), in ms. */
+        const val V_REVEAL_MS = 220f
+        /** Fling release threshold, in screen px/s, below which the grid just stops. */
+        const val V_FLING_MIN = 120f
+        /** Fling speed cap, in design px/s. */
+        const val V_FLING_MAX = 5000f
+        /** Fling velocity halving time, in ms. */
+        const val V_FLING_HALF_MS = 150f
+        /** Fling stop threshold, in design px/s. */
+        const val V_FLING_STOP = 15f
+        /** Alpha of the settings gear while the settings channel is already showing. */
+        const val GEAR_DIM_ALPHA = 90
         /** Hover chrome fade, in and out. */
         const val CHROME_FADE_MS = 150f
     }
@@ -1439,7 +1662,10 @@ class HomeView(
     private var downX = 0f
     private var downY = 0f
     private var downScroll = 0f
+    private var downVOff = 0f
     private var dragging = false
+    /** Gesture axis lock (0.9.0): 0 undecided, 1 horizontal (channel pivot), 2 vertical (grid scroll). */
+    private var dragAxis = 0
     private var longFired = false
     private var velocity: VelocityTracker? = null
     private val longPress = Runnable {
@@ -1484,6 +1710,7 @@ class HomeView(
         pinch.onTouchEvent(e)
         if (e.actionMasked == MotionEvent.ACTION_POINTER_DOWN && !pinching) {
             pinching = true
+            dragAxis = 0
             removeCallbacks(longPress)
             if (dragging) { dragging = false; goToPage(focusPage, focusSlot) }
         }
@@ -1497,21 +1724,28 @@ class HomeView(
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 downX = e.x; downY = e.y; downScroll = scroll
-                dragging = false; longFired = false
+                downVOff = vOff(focusPage)
+                dragging = false; dragAxis = 0; longFired = false
+                // A new touch takes the grid back from any fling or reveal animation.
+                vFlingPage = -1; vAnimStart = -1
                 velocity = VelocityTracker.obtain().also { it.addMovement(e) }
                 postDelayed(longPress, longPressMs)
             }
             MotionEvent.ACTION_MOVE -> {
                 velocity?.addMovement(e)
-                if (!dragging && abs(e.x - downX) > slop && abs(e.x - downX) > abs(e.y - downY)) {
-                    dragging = true
+                if (dragAxis == 0 && (abs(e.x - downX) > slop || abs(e.y - downY) > slop)) {
+                    // Dominant axis wins: a vertical drag scrolls the grid, a
+                    // horizontal one pivots channels, as the gestures always did.
+                    dragAxis = if (abs(e.y - downY) > abs(e.x - downX)) 2 else 1
                     removeCallbacks(longPress)
-                    scrollStart = -1
+                    if (dragAxis == 1) { dragging = true; scrollStart = -1 }
                 }
-                if (abs(e.y - downY) > slop) removeCallbacks(longPress)
-                if (dragging) {
+                if (dragAxis == 1) {
                     val maxScroll = (hub.pages.size - 1) * L.w
                     scroll = (downScroll - (e.x - downX) / s).coerceIn(-120f, maxScroll + 120f)
+                    invalidate()
+                } else if (dragAxis == 2) {
+                    setVOff(focusPage, downVOff - (e.y - downY) / s)
                     invalidate()
                 }
             }
@@ -1521,25 +1755,42 @@ class HomeView(
                 vt?.addMovement(e)
                 vt?.computeCurrentVelocity(1000)
                 val vx = vt?.xVelocity ?: 0f
+                val vy = vt?.yVelocity ?: 0f
                 velocity?.recycle(); velocity = null
-                if (dragging) {
-                    val base = (downScroll / L.w).roundToInt()
-                    val moved = (scroll - downScroll) / L.w
-                    val step = when {
-                        vx < -800f || moved > 0.3f -> 1
-                        vx > 800f || moved < -0.3f -> -1
-                        else -> 0
+                when {
+                    dragAxis == 1 -> {
+                        val base = (downScroll / L.w).roundToInt()
+                        val moved = (scroll - downScroll) / L.w
+                        val step = when {
+                            vx < -800f || moved > 0.3f -> 1
+                            vx > 800f || moved < -0.3f -> -1
+                            else -> 0
+                        }
+                        val target = (base + step).coerceIn(0, hub.pages.size - 1)
+                        goToPage(target, if (target == focusPage) focusSlot else defaultSlot(target))
                     }
-                    val target = (base + step).coerceIn(0, hub.pages.size - 1)
-                    goToPage(target, if (target == focusPage) focusSlot else defaultSlot(target))
-                } else if (!longFired) {
-                    tap(e.x, e.y)
+                    dragAxis == 2 -> {
+                        // Fling: the grid keeps the finger's release velocity,
+                        // converted to design px/s and capped; stepVScroll decays
+                        // it and stops it dead at the edges.
+                        if (abs(vy) > V_FLING_MIN) {
+                            vFlingVel = (-vy / s).coerceIn(-V_FLING_MAX, V_FLING_MAX)
+                            vFlingPage = focusPage
+                            lastVStep = SystemClock.uptimeMillis()
+                            invalidate()
+                        }
+                    }
+                    !longFired -> tap(e.x, e.y)
                 }
+                dragging = false
+                dragAxis = 0
             }
             MotionEvent.ACTION_CANCEL -> {
                 removeCallbacks(longPress)
                 velocity?.recycle(); velocity = null
                 if (dragging) goToPage(focusPage, focusSlot)
+                dragging = false
+                dragAxis = 0
             }
         }
         return true
@@ -1552,8 +1803,17 @@ class HomeView(
         val page = (scroll / L.w).roundToInt().coerceIn(0, hub.pages.size - 1)
         val p = hub.pages[page]
         val px = dx - pageX(page)
-        val py = dy - pageY(page)
-        for (i in p.template.slots.indices) if (p.focusable(i) && p.template.slots[i].contains(px, py)) return page to i
+        val py = dy - L.panelsY
+        // The hero is hit where it sits; grid tiles only inside the scroll region,
+        // tested in content space (panel position plus the scroll offset).
+        val hero = p.template.hero
+        if (hero >= 0 && p.focusable(hero) && p.template.slots[hero].contains(px, py)) return page to hero
+        if (py < p.template.gridTop || py >= L.panelsH) return null
+        val cy = py + vOff(page)
+        for (i in p.template.slots.indices) {
+            if (i == hero || !p.focusable(i)) continue
+            if (p.template.slots[i].contains(px, cy)) return page to i
+        }
         return null
     }
 
@@ -1570,6 +1830,13 @@ class HomeView(
                     return
                 }
             }
+        }
+        if (gearBox().contains(dx, dy)) {
+            // The settings shortcut: a normal channel jump (slide + cascade), and
+            // inert on the settings channel itself, where it is drawn dimmed.
+            val si = settingsIndex()
+            if (si >= 0 && hub.channelOf(focusPage) != si) goToChannel(si, false)
+            return
         }
         for ((i, r) in twistBoxes.withIndex()) {
             if (r.contains(dx, dy)) { goToChannel(i, false); return }
