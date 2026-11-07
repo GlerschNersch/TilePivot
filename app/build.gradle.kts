@@ -44,6 +44,21 @@ android {
         unitTests.isReturnDefaultValues = true
     }
 
+    // Optional, PRIVATE avatar-pack decoder: a sibling folder that is never part of this repo, compiled
+    // in only when a build is run with -PwithAvatarPack (sideloaded personal builds). Without it the
+    // app's AvatarPacks.decoder is null and the import option never appears. A Play bundle must never
+    // contain it, so bundle tasks refuse to run with the flag.
+    val avatarPackDir = rootProject.file("../TilePivotAvatarPack")
+    if (providers.gradleProperty("withAvatarPack").isPresent) {
+        require(avatarPackDir.isDirectory) { "withAvatarPack set but ${avatarPackDir} is missing" }
+        require(gradle.startParameter.taskNames.none { it.contains("bundle", ignoreCase = true) }) {
+            "withAvatarPack must not be used for Play bundles"
+        }
+        sourceSets["main"].java.srcDir(File(avatarPackDir, "src/main/java"))
+        sourceSets["test"].java.srcDir(File(avatarPackDir, "src/test/java"))
+        buildTypes.getByName("release").proguardFile(File(avatarPackDir, "proguard-rules.pro"))
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
