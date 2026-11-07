@@ -908,3 +908,38 @@ Emulator only (Medium_Phone_API_36.1, 1080x2400 portrait, release build;
   placement (currently estimated; the real compositor is in XAM), and heads
   poking through some hats (the console's "Hiding Template" assets are
   undecoded).
+## App v0.10.2
+
+- The live 3D avatar on the home hero is about 15% larger, at Matt's
+  request ("slightly larger"). One framing constant changed:
+  AvatarOverlay's renderer headroom 0.28 -> 0.113. AvatarRenderer.frame()
+  fits (figure height x (1 + headroom)) into the stage with the band
+  anchored at the feet, so the figure's screen height scales by
+  1.28 / 1.113 ~= 1.15 and its feet keep the exact same screen position:
+  growth is upward from the hero floor, no sinking, floating or sideways
+  shift. Presentation only -- no behaviour, animation or data changes --
+  and the overlay's stage (HomeView.reportAvatarStage) and touch geometry
+  are untouched. The full-screen avatar view never sets headroom and is
+  unchanged. The flat 0.9.1 fallback figure (home/AvatarFigure.kt) has its
+  own independent geometry and is deliberately left as it was.
+- Constraint checks (portrait hero): the head top moves from ~32 to ~10
+  design px below the hero's top edge -- still inside, and the stage
+  itself extends above the hero, so emotes keep their room. The wider
+  figure grows around the stage centre and stays clear of the hero art
+  and the label zone. Emulator burst frames of the arrival wave at the
+  new size show the raised hand fully rendered, peaking just inside the
+  hero's top edge -- nothing clips at the stage edge.
+- Files: avatar/AvatarOverlay.kt (headroom + comment),
+  app/build.gradle.kts (version 0.10.2 / 23), docs/RE_NOTES.md (this
+  section).
+- Tests: 129 per variant in the default build; 137 per variant with
+  -PwithAvatarPack (the 8 decoder suites among them, none skipped);
+  0 failures/errors in all four runs, counted from test-results XML
+  after a forced --rerun-tasks.
+- Emulator evidence (Medium_Phone_API_36.1, public release installed as
+  an update over 0.10.1; screenshots in re/out/avatar):
+  _s16_hero_before.png / _s16_hero_after.png -- same hero state (home
+  channel, AloyMobile hero): figure height ~260 -> ~298 screen px
+  (+~15%), feet at the same screen y, head inside the hero, no overlap
+  with the hero art or the label. _s16_hero_wave.png -- the arrival
+  wave at the new size, hand fully inside the frame.

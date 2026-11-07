@@ -22,7 +22,12 @@ import kotlin.math.abs
  */
 @SuppressLint("ViewConstructor")
 class AvatarOverlay(context: Context, private val onLongPress: () -> Unit) : TextureView(context), TextureView.SurfaceTextureListener {
-    val renderer = AvatarRenderer(0x00000000).apply { headroom = 0.28f }
+    // Framing: the renderer fits the figure plus this much headroom into the
+    // stage, anchored at the feet, so a smaller value reads as a larger
+    // figure growing upward from the hero floor. 0.113 (0.28 up to 0.10.1)
+    // makes the hero figure about 15% larger while its head still clears
+    // the hero's top edge (RE_NOTES, App v0.10.2).
+    val renderer = AvatarRenderer(0x00000000).apply { headroom = 0.113f }
     private var thread: GlThread? = null
     @Volatile private var running = false
 
