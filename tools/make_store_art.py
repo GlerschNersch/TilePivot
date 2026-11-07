@@ -162,9 +162,11 @@ def full_icon(px):
 
 def legacy_icon(px, round_shape):
     """Pre-API-26 launcher icon: the visible centre of the adaptive icon (72 of 108 units),
-    masked to a rounded square or a circle with a little margin, like Studio's export."""
+    masked to a rounded square (with a little margin, like Studio's export) or a circle."""
     big = px * SS
-    margin = round(big * 1.5 / 48)            # 1.5dp of 48dp
+    # 1.5dp of 48dp around the rounded square; the circle is full-bleed, which is the shape
+    # lint's IconLauncherShape check expects of a round icon.
+    margin = 0 if round_shape else round(big * 1.5 / 48)
     inner = big - 2 * margin
     visible = 72.0                             # what a launcher's mask shows of 108
     scale = inner / visible
