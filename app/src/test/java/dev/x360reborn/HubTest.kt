@@ -541,4 +541,26 @@ class HubTest {
         // The deepest tile of a full portrait page (row 4, col 3) settles in ~600 ms.
         assertTrue(Anim.totalMs(Anim.delayFor(4, 3)) <= 600f)
     }
+
+    // ---- privacy policy entry ----------------------------------------------------------------
+
+    @Test fun privacyEntryOpensTheHostedPolicyAsAnExternalAction() {
+        val entry = Apps.privacyEntry()
+        assertEquals("privacy policy", entry.label)
+        assertEquals(Apps.ACTION_PRIVACY, entry.action)
+        // External: the hub plays its leave transition, as for any activity it hands off to.
+        assertTrue(entry.external)
+        assertEquals("https://glerschnersch.github.io/TilePivot/privacy-policy.html", Apps.PRIVACY_POLICY_URL)
+    }
+
+    @Test fun privacyEntryBecomesASettingsChannelTile() {
+        val entries = listOf(SettingsEntry("about", "x"), Apps.privacyEntry())
+        val hub = HubBuilder.build(listOf(AppInfo("a/A", "Alpha")), emptyList(), emptyList(), entries)
+        val ch = hub.channels.first { it.title == "settings" }
+        val tiles = (ch.firstPage until ch.firstPage + ch.pageCount).flatMap { hub.pages[it].tiles }
+        val labels = tiles.map { it.label }
+        assertTrue(labels.indexOf("privacy policy") == labels.indexOf("about") + 1)
+        assertEquals(Target.Action(Apps.ACTION_PRIVACY, external = true),
+            tiles.single { it.label == "privacy policy" }.target)
+    }
 }

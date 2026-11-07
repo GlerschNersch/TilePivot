@@ -378,6 +378,7 @@ class Apps(
             SettingsEntry("apps", Settings.ACTION_APPLICATION_SETTINGS),
             SettingsEntry("home app", Settings.ACTION_HOME_SETTINGS),
             SettingsEntry("about", Settings.ACTION_DEVICE_INFO_SETTINGS),
+            privacyEntry(),
         )
     }
 
@@ -385,6 +386,15 @@ class Apps(
         /** The settings row for the game library: the one-time pick invitation, or the scan count. */
         fun xboxEntryLabel(folders: Int, count: Int): String =
             if (folders == 0) "xbox 360 games: pick a games folder" else "xbox 360 games: $count found"
+
+        /** The hosted privacy policy (docs/privacy-policy.html, GitHub Pages). */
+        const val PRIVACY_POLICY_URL = "https://glerschnersch.github.io/TilePivot/privacy-policy.html"
+
+        /** Launcher-internal action: open [PRIVACY_POLICY_URL] in the browser. */
+        const val ACTION_PRIVACY = "dev.x360reborn.PRIVACY_POLICY"
+
+        /** The settings tile for the privacy policy; it leaves the hub for the browser. */
+        fun privacyEntry() = SettingsEntry("privacy policy", ACTION_PRIVACY, external = true)
 
         /** Launcher-internal action: cycle the tile size. */
         const val ACTION_TILE_SIZE = "dev.x360reborn.TILE_SIZE"

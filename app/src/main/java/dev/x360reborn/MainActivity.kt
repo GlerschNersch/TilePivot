@@ -281,7 +281,13 @@ class MainActivity : Activity() {
                     .setType("*/*")
                     .putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("application/json", "text/plain", "application/octet-stream")), REQ_RESTORE)
             } else try {
-                startActivity(Intent(t.name).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                // The privacy tile opens the hosted policy in the browser; the rest are system actions.
+                val intent = if (t.name == Apps.ACTION_PRIVACY) {
+                    Intent(Intent.ACTION_VIEW, Uri.parse(Apps.PRIVACY_POLICY_URL))
+                } else {
+                    Intent(t.name)
+                }
+                startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
                     ActivityOptions.makeCustomAnimation(this, android.R.anim.fade_in, 0).toBundle())
                 handedOff()
             } catch (e: ActivityNotFoundException) {
