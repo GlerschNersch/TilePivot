@@ -11,8 +11,10 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.UserHandle
+import android.provider.MediaStore
 import android.provider.Settings
 import android.text.Editable
+import android.text.InputFilter
 import android.text.TextWatcher
 import android.util.Log
 import android.view.WindowInsets
@@ -42,6 +44,7 @@ class MainActivity : Activity() {
     private lateinit var games: Games
     private lateinit var library: GameLibrary
     private lateinit var covers: Covers
+    private lateinit var profile: Profile
     private val loader = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
     private val launcherApps by lazy { getSystemService(LauncherApps::class.java) }
@@ -78,6 +81,13 @@ class MainActivity : Activity() {
         view.tileSize = apps.tileSize
         view.bgStyle = apps.bgStyle
         view.clock24h = apps.clock24h
+        profile = Profile(this)
+        view.profileName = profile.name
+        view.onProfile = ::profileOptions
+        loader.execute {
+            val pic = profile.loadPicture()
+            main.post { view.profilePicture = pic }
+        }
         setContentView(view)
         window.insetsController?.apply {
             hide(WindowInsets.Type.statusBars())
@@ -253,6 +263,8 @@ class MainActivity : Activity() {
                 openSearch("")
             } else if (t.name == Apps.ACTION_XBOX) {
                 gameLibrary()
+            } else if (t.name == Apps.ACTION_PROFILE) {
+                profileOptions()
             } else if (t.name == Apps.ACTION_THEME) {
                 themePicker()
             } else if (t.name == Apps.ACTION_BG) {
@@ -368,6 +380,7 @@ class MainActivity : Activity() {
             REQ_BACKUP -> saveBackup(uri)
             REQ_RESTORE -> confirmRestore(uri)
             REQ_GAME_FOLDER -> addGameFolder(uri)
+            REQ_PROFILE_PICTURE -> setProfilePicture(uri)
         }
     }
 
@@ -482,6 +495,63 @@ class MainActivity : Activity() {
             val n = games.found
             main.post { Toast.makeText(this, "$n Xbox 360 games found", Toast.LENGTH_SHORT).show() }
         }
+    }
+
+    /** The profile chip's menu: picture from the user's photos, remove it, or set the name. */
+    private fun profileOptions() {
+        val labels = ArrayList<String>()
+        val actions = ArrayList<() -> Unit>()
+        labels += "Choose picture…"
+        actions += ::pickProfilePicture
+        if (view.profilePicture != null) {
+            labels += "Remove picture"
+            actions += {
+                loader.execute { profile.clearPicture() }
+                view.profilePicture = null
+            }
+        }
+        labels += if (profile.name.isEmpty()) "Set name…" else "Change name…"
+        actions += ::profileNameDialog
+        AlertDialog.Builder(this)
+            .setTitle(profile.name.ifEmpty { "Profile" })
+            .setItems(labels.toTypedArray()) { _, which -> actions.getOrNull(which)?.invoke() }
+            .show()
+    }
+
+    /** The system photo picker: no permission, and TilePivot only ever sees the one photo picked. */
+    private fun pickProfilePicture() {
+        pickFile(Intent(MediaStore.ACTION_PICK_IMAGES).setType("image/*"), REQ_PROFILE_PICTURE)
+    }
+
+    private fun setProfilePicture(uri: Uri) {
+        loader.execute {
+            val pic = profile.setPicture(uri)
+            main.post {
+                if (pic == null) Toast.makeText(this, "Couldn't use that picture", Toast.LENGTH_LONG).show()
+                else view.profilePicture = pic
+            }
+        }
+    }
+
+    private fun profileNameDialog() {
+        val input = EditText(this).apply {
+            hint = "Your name"
+            setSingleLine(true)
+            filters = arrayOf(InputFilter.LengthFilter(Profile.MAX_NAME))
+            setText(profile.name)
+            setSelection(length())
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Profile name")
+            .setView(input)
+            .setPositiveButton("OK") { _, _ ->
+                // An empty name is allowed: it clears the name and the chip shows just the picture.
+                profile.name = input.text.toString()
+                view.profileName = profile.name
+                reload() // the settings tile shows the name
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     /** Search dialog: a text field over a live-filtered list of apps; tapping one launches it. */
@@ -637,6 +707,7 @@ class MainActivity : Activity() {
         const val REQ_BACKUP = 1
         const val REQ_RESTORE = 2
         const val REQ_GAME_FOLDER = 3
+        const val REQ_PROFILE_PICTURE = 4
         /** Xendroid+'s emulator launch action (EmulatorHostActivity). */
         const val ACTION_XENDROID = "xendroid.intent.action.xendroid"
         /** Release builds install as .fork; the plain package is the suffix-overridden build. */

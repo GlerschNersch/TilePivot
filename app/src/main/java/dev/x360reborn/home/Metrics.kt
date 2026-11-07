@@ -14,6 +14,13 @@ data class Box(val x: Float, val y: Float, val w: Float, val h: Float) {
     fun contains(px: Float, py: Float) = px >= x && px < right && py >= y && py < bottom
 }
 
+/**
+ * The clock-strip profile chip (see [Metrics.profileChip]): the picture's box, the
+ * name's right edge (text is right-aligned there) and the width it may take (0 = no
+ * name shown), and the touch target.
+ */
+data class ProfileChip(val pic: Box, val nameRight: Float, val nameMaxW: Float, val hit: Box)
+
 /** Numbers measured from the 17559 dash scenes; see docs/RE_NOTES.md for sources. */
 object Metrics {
     const val DESIGN_W = 1280f
@@ -278,6 +285,38 @@ object Metrics {
         val right = clockX - clockTextW - GEAR_GAP
         val cy = clockCenterY(clockY)
         return Box(right - GEAR_BOX, cy - GEAR_BOX / 2f, GEAR_BOX, GEAR_BOX)
+    }
+
+    // Profile chip (0.10.0): the dash's MiniGamercard sits at the top right of the
+    // home page as gamertag text with the profile's gamerpic beside it. Here it
+    // rides the clock strip left of the settings gear: [name] [picture] [gear]
+    // [clock]. The picture is a square drawn at PROFILE_PIC; the hit box is the
+    // full chip at GEAR_BOX height, so it clears 48 dp like the gear.
+    const val PROFILE_PIC = 52f
+    const val PROFILE_GAP = 12f
+    /** Below this much room the name is dropped and only the picture shows. */
+    const val PROFILE_NAME_MIN = 72f
+    const val PROFILE_NAME_MAX = 300f
+
+    /**
+     * The profile chip, ending at [right] (the gear box's left edge) and never
+     * reaching left of [minX] (the strip's margin). [nameW] is the gamertag's
+     * full text width (0 for no name). Returns null when not even the picture fits.
+     */
+    fun profileChip(right: Float, clockY: Float, nameW: Float, minX: Float): ProfileChip? {
+        val cy = clockCenterY(clockY)
+        val picR = right - PROFILE_GAP
+        val picL = picR - PROFILE_PIC
+        if (picL < minX) return null
+        val pic = Box(picL, cy - PROFILE_PIC / 2f, PROFILE_PIC, PROFILE_PIC)
+        val room = min(PROFILE_NAME_MAX, picL - PROFILE_GAP - minX)
+        val nameMax = if (nameW > 0f && room >= min(nameW, PROFILE_NAME_MIN)) min(nameW, room) else 0f
+        val left = if (nameMax > 0f) picL - PROFILE_GAP - nameMax else picL
+        // The hit box spans the whole chip, widened to GEAR_BOX when it is just the
+        // picture, and never reaches the gear's own box.
+        val hitW = max(right - left, GEAR_BOX)
+        val hit = Box(right - hitW, cy - GEAR_BOX / 2f, hitW, GEAR_BOX)
+        return ProfileChip(pic, picL - PROFILE_GAP, nameMax, hit)
     }
 
     /** The three hover-chrome boxes in order: back, home, search. */

@@ -360,6 +360,7 @@ class Apps(
             // invites the one-time pick, otherwise it reports the scan. Either way a tap opens
             // the game-library manager (add / remove folders, re-scan).
             SettingsEntry(xboxEntryLabel(xboxFolders, xboxCount), ACTION_XBOX, glyph = Glyph.GAMEPAD, external = false),
+            profileEntry(prefs.getString(PROFILE_NAME, "")!!),
             SettingsEntry("theme: ${Themes.byId(themeId).name.lowercase()}", ACTION_THEME, glyph = Glyph.THEME, external = false),
             SettingsEntry("tile size: ${tileSize.label}", ACTION_TILE_SIZE, glyph = Glyph.TILE_SIZE, external = false),
             SettingsEntry("background: ${bgStyle.label}", ACTION_BG, external = false),
@@ -386,6 +387,15 @@ class Apps(
         /** The settings row for the game library: the one-time pick invitation, or the scan count. */
         fun xboxEntryLabel(folders: Int, count: Int): String =
             if (folders == 0) "xbox 360 games: pick a games folder" else "xbox 360 games: $count found"
+
+        /** The settings tile for the profile chip's picture and name. */
+        fun profileEntry(name: String) =
+            SettingsEntry(if (name.isEmpty()) "profile" else "profile: $name", ACTION_PROFILE, glyph = Glyph.PROFILE, external = false)
+
+        /** Launcher-internal action: change the profile picture or name. */
+        const val ACTION_PROFILE = "dev.x360reborn.PROFILE"
+        /** Same key [Profile] writes; read here only for the settings label. */
+        private const val PROFILE_NAME = "profileName"
 
         /** The hosted privacy policy (docs/privacy-policy.html, GitHub Pages). */
         const val PRIVACY_POLICY_URL = "https://glerschnersch.github.io/TilePivot/privacy-policy.html"

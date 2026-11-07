@@ -125,6 +125,7 @@ class HomeView(
         heroPrimary.color = Metrics.TEXT
         heroSecondary.color = Metrics.TEXT_DIM
         clockText.color = Metrics.TEXT
+        profileText.color = Metrics.TEXT
     }
 
     // Fit transform, design -> screen.
@@ -185,6 +186,7 @@ class HomeView(
     private val heroPrimary = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { color = Metrics.TEXT; textSize = Metrics.pt(17f) }
     private val heroSecondary = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { color = Metrics.TEXT_DIM; textSize = Metrics.pt(16f) }
     private val clockText = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { color = Metrics.TEXT; typeface = light; textSize = Metrics.pt(18f); textAlign = Paint.Align.RIGHT }
+    private val profileText = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { color = Metrics.TEXT; typeface = light; textSize = Metrics.pt(15f); textAlign = Paint.Align.RIGHT }
     private val rect = RectF()
     private val iconRect = RectF()
     private val srcRect = Rect()
@@ -567,6 +569,7 @@ class HomeView(
         if (transforming) canvas.restore()
         canvas.drawText(hubClock(), L.clockX, L.clockY, clockText)
         drawGear(canvas)
+        drawProfile(canvas)
         drawHoverChrome(canvas)
         canvas.restore()
 
@@ -1014,8 +1017,20 @@ class HomeView(
                 }
                 fill.style = Paint.Style.FILL
             }
+            Glyph.PROFILE -> drawPersonGlyph(canvas, x, y, size)
             Glyph.NONE -> {}
         }
+    }
+
+    /** Head-and-shoulders silhouette in the current fill colour, filling a [size] square at ([x], [y]). */
+    private fun drawPersonGlyph(canvas: Canvas, x: Float, y: Float, size: Float) {
+        val cx = x + size / 2f
+        canvas.drawCircle(cx, y + size * 0.36f, size * 0.19f, fill)
+        canvas.save()
+        canvas.clipRect(x, y, x + size, y + size * 0.94f)
+        rect.set(cx - size * 0.36f, y + size * 0.6f, cx + size * 0.36f, y + size * 1.28f)
+        canvas.drawOval(rect, fill)
+        canvas.restore()
     }
 
     private val twistBoxes = ArrayList<RectF>()
@@ -1071,6 +1086,63 @@ class HomeView(
         fill.alpha = if (hub.channelOf(focusPage) == settingsIndex()) GEAR_DIM_ALPHA else 235
         drawGearGlyph(canvas, gb.cx, gb.cy, Metrics.GEAR_GLYPH)
         fill.alpha = 255
+    }
+
+    // ---- profile chip -------------------------------------------------------------------
+
+    /** The user's chosen picture, or null for the drawn placeholder. */
+    var profilePicture: Bitmap? = null
+        set(v) { field = v; invalidate() }
+
+    /** The user's display name; empty shows the picture alone. */
+    var profileName: String = ""
+        set(v) {
+            if (field == v) return
+            field = v
+            profileShownFor = Float.NaN
+            invalidate()
+            a11yTreeChanged()
+        }
+
+    /** Tapped the profile chip (or activated it with TalkBack). */
+    var onProfile: () -> Unit = {}
+
+    /** The ellipsized name and the width it was cut for. */
+    private var profileShown = ""
+    private var profileShownFor = Float.NaN
+
+    /** Where the chip sits now, left of the gear; null when the strip has no room for it. */
+    private fun profileChip(): ProfileChip? =
+        Metrics.profileChip(gearBox().x, L.clockY,
+            if (profileName.isEmpty()) 0f else profileText.measureText(profileName), L.twistX)
+
+    /**
+     * The clock-strip profile chip (0.10.0): the name right-aligned beside a square
+     * picture, after the dash's MiniGamercard. With no picture chosen it shows a drawn
+     * silhouette on the theme's tile colour. Like the gear: pointer and TalkBack only.
+     */
+    private fun drawProfile(canvas: Canvas) {
+        val chip = profileChip() ?: return
+        val p = chip.pic
+        val bmp = profilePicture
+        if (bmp != null) {
+            iconRect.set(p.x, p.y, p.right, p.bottom)
+            canvas.drawBitmap(bmp, null, iconRect, bmpPaint)
+        } else {
+            fill.color = Metrics.TILE_GREEN
+            canvas.drawRect(p.x, p.y, p.right, p.bottom, fill)
+            fill.color = Metrics.TEXT
+            fill.alpha = 235
+            drawPersonGlyph(canvas, p.x + p.w * 0.1f, p.y + p.h * 0.1f, p.w * 0.8f)
+            fill.alpha = 255
+        }
+        if (chip.nameMaxW > 0f) {
+            if (profileShownFor != chip.nameMaxW) {
+                profileShown = TextUtils.ellipsize(profileName, profileText, chip.nameMaxW, TextUtils.TruncateAt.END).toString()
+                profileShownFor = chip.nameMaxW
+            }
+            canvas.drawText(profileShown, chip.nameRight, L.clockY, profileText)
+        }
     }
 
     /** The gear glyph, shared by the top-strip shortcut and the settings tiles. */
@@ -1241,6 +1313,7 @@ class HomeView(
 
     private fun describeId(id: Int): String? = when {
         id == GEAR_ID -> "Settings"
+        id == PROFILE_ID -> if (profileName.isEmpty()) "Profile" else "Profile, $profileName"
         isTileId(id) -> tileAt(id)?.let(::describe)
         isTwistId(id) -> hub.channels.getOrNull(id - TWIST_BASE)?.title
         else -> null
@@ -1264,6 +1337,10 @@ class HomeView(
             id == GEAR_ID -> {
                 val gb = gearBox()
                 floatArrayOf(gb.x, gb.y, gb.w, gb.h)
+            }
+            id == PROFILE_ID -> {
+                val hb = profileChip()?.hit ?: return false
+                floatArrayOf(hb.x, hb.y, hb.w, hb.h)
             }
             isTwistId(id) -> {
                 val i = id - TWIST_BASE
@@ -1289,6 +1366,7 @@ class HomeView(
         val ids = ArrayList<Int>()
         val r = Rect()
         for (i in hub.channels.indices) if (a11yBounds(TWIST_BASE + i, r)) ids += TWIST_BASE + i
+        if (profileChip() != null) ids += PROFILE_ID
         ids += GEAR_ID
         val p = hub.pages.getOrNull(focusPage) ?: return ids
         val order = p.template.slots.indices.filter { p.focusable(it) }
@@ -1326,7 +1404,9 @@ class HomeView(
             n.isFocusable = true
             n.isClickable = true
             n.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_CLICK)
-            if (id == GEAR_ID) {
+            if (id == PROFILE_ID) {
+                n.stateDescription = "change picture or name"
+            } else if (id == GEAR_ID) {
                 n.stateDescription = "shortcut"
                 if (hub.channelOf(focusPage) == settingsIndex()) n.isEnabled = false
             } else if (isTwistId(id)) {
@@ -1384,6 +1464,7 @@ class HomeView(
                     if (away) return false
                     when {
                         id == GEAR_ID -> settingsIndex().takeIf { it >= 0 }?.let { goToChannel(it, false) }
+                        id == PROFILE_ID -> onProfile()
                         isTwistId(id) -> goToChannel(id - TWIST_BASE, false)
                         else -> { focusSlot = id - TILE_BASE; twistFocused = false; activate(focusPage, focusSlot) }
                     }
@@ -1631,6 +1712,8 @@ class HomeView(
         const val TWIST_BASE = 10_000
         /** The settings gear's accessibility id (kept clear of the twist range). */
         const val GEAR_ID = 20_000
+        /** The profile chip's accessibility id. */
+        const val PROFILE_ID = 20_001
         const val NO_VIRTUAL = Int.MIN_VALUE
         /** Reveal-scroll animation length (focus moves, reader scrolls), in ms. */
         const val V_REVEAL_MS = 220f
@@ -1831,6 +1914,7 @@ class HomeView(
                 }
             }
         }
+        if (profileChip()?.hit?.contains(dx, dy) == true) { onProfile(); return }
         if (gearBox().contains(dx, dy)) {
             // The settings shortcut: a normal channel jump (slide + cascade), and
             // inert on the settings channel itself, where it is drawn dimmed.
