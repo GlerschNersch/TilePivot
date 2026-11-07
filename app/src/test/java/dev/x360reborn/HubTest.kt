@@ -15,6 +15,7 @@ import dev.x360reborn.home.Metrics
 import dev.x360reborn.home.Motion
 import dev.x360reborn.home.Nav
 import dev.x360reborn.home.Page
+import dev.x360reborn.home.Scroll
 import dev.x360reborn.home.Search
 import dev.x360reborn.home.SettingsEntry
 import dev.x360reborn.home.Target
@@ -49,12 +50,17 @@ class HubTest {
         assertEquals(Target.App("p7/A"), home.tiles[0].target)
     }
 
-    @Test fun appsChannelPagesHoldFifteen() {
+    @Test fun appsChannelIsOneScrollPage() {
         val hub = HubBuilder.build(apps, emptyList(), emptyList(), settings)
         val ch = hub.channels.first { it.title == "apps" }
-        // 30 apps + the search tile at the head of the channel = 31 tiles, so 3 pages of 15.
-        assertEquals(3, ch.pageCount)
-        assertEquals(15, hub.pages[ch.firstPage].tiles.size)
+        // 0.9.0: 30 apps + the search tile live on ONE vertically scrolling page
+        // (was 3 horizontal pages of 15). 31 tiles at 5 columns stack 7 rows.
+        assertEquals(1, ch.pageCount)
+        val page = hub.pages[ch.firstPage]
+        assertEquals(31, page.tiles.size)
+        assertEquals(7, page.template.slots.map { it.y }.distinct().size)
+        // The content is taller than the panel: this page scrolls.
+        assertTrue(page.template.h > hub.layout.panelsH)
     }
 
     @Test fun searchReturnsAllAlphabeticallyForEmptyQuery() {
@@ -119,7 +125,8 @@ class HubTest {
         val s = t.slots[t.hero]
         return Box(
             (layout.w - t.w) / 2f + s.x,
-            layout.panelsY + (layout.panelsH - t.h) / 2f + s.y,
+            // 0.9.0: pages hang from the panels' top edge; the hero never moves.
+            layout.panelsY + s.y,
             s.w, s.h,
         )
     }
@@ -241,7 +248,7 @@ class HubTest {
         val home = hub.pages[0]
         assertEquals(Kind.HERO, home.tiles[home.template.hero].kind)
         assertEquals("all apps", home.tiles[home.template.wide[0]].label)
-        assertEquals(10, hub.pages[hub.channels.first { it.title == "apps" }.firstPage].tiles.size)
+        assertEquals(31, hub.pages[hub.channels.first { it.title == "apps" }.firstPage].tiles.size)
         // Down from the hero lands on the left tile of the first row.
         assertEquals(1, Nav.move(l.home.slots, { true }, home.template.hero, 0, 1))
     }
@@ -439,10 +446,14 @@ class HubTest {
         val first = hub.pages[ch.firstPage]
         // Boosted tiles are bigger than the layout's own small tiles...
         assertTrue(first.template.slots[2].w > layout.home.slots[2].w)
-        // ...the boosted template still fits the panel height...
-        assertTrue(first.template.h <= layout.panelsH + 0.01f)
-        // ...and the 13 tiles' first page fills at least 75% of the panel height.
-        val usedBottom = first.template.slots.filterIndexed { i, _ -> first.focusable(i) }.maxOf { it.bottom }
+        // ...the grid hangs under the fixed hero, one gutter below it (0.9.0)...
+        val k = first.template.slots[2].w / Metrics.SMALL_W
+        assertEquals(first.template.slots[first.template.hero].bottom + Metrics.GUTTER * k,
+            first.template.gridTop, 0.01f)
+        // ...and the first viewport of the scroll grid fills at least 75% of the panel.
+        val usedBottom = first.template.slots
+            .filterIndexed { i, b -> first.focusable(i) && i != first.template.hero && b.y < layout.panelsH }
+            .maxOf { minOf(it.bottom, layout.panelsH) }
         assertTrue("fill ${usedBottom / layout.panelsH}", usedBottom / layout.panelsH >= 0.75f)
     }
 
@@ -450,17 +461,34 @@ class HubTest {
         val layout = Layout.portrait(1080, 2400, TileSize.MEDIUM)
         val hub = HubBuilder.build(gameApps(30), emptyList(), emptyList(), settings, layout)
         val ch = hub.channels.first { it.title == "games" }
-        assertEquals(layout.home, hub.pages[ch.firstPage].template)
-        assertEquals(layout.grid, hub.pages[ch.firstPage + 1].template)
+        // 0.9.0: one scroll page per channel, assembled from the layout's own
+        // templates -- the hero slot is the layout home template's hero, and the
+        // grid cells are the layout grid's, at the layout grid's pitch.
+        assertEquals(1, ch.pageCount)
+        val t = hub.pages[ch.firstPage].template
+        assertEquals(layout.home.slots[layout.home.hero], t.slots[t.hero])
+        val grid = t.slots.filterIndexed { i, _ -> i != t.hero }
+        assertEquals(layout.grid.slots[0].w, grid[0].w, 0.01f)
+        assertEquals(layout.grid.slots[0].h, grid[0].h, 0.01f)
+        val row0 = grid.filter { it.y == grid[0].y }.sortedBy { it.x }
+        assertEquals(178f, row0[1].x - row0[0].x, 0.01f)
     }
 
     @Test fun appsAndSettingsChannelsAreNeverBoosted() {
         val layout = Layout.portrait(1080, 2400, TileSize.SMALL)
         val hub = HubBuilder.build(gameApps(2), emptyList(), emptyList(), settings, layout)
+        // 0.9.0: one hero-less scroll page each, cells at the layout grid's own size.
         val appsCh = hub.channels.first { it.title == "apps" }
-        assertEquals(layout.grid, hub.pages[appsCh.firstPage].template)
+        val appsT = hub.pages[appsCh.firstPage].template
+        assertEquals(1, appsCh.pageCount)
+        assertEquals(-1, appsT.hero)
+        assertEquals(layout.grid.slots[0].w, appsT.slots[0].w, 0.01f)
+        assertEquals(layout.grid.slots[0].h, appsT.slots[0].h, 0.01f)
         val setCh = hub.channels.first { it.title == "settings" }
-        assertEquals(layout.grid, hub.pages[setCh.firstPage].template)
+        val setT = hub.pages[setCh.firstPage].template
+        assertEquals(1, setCh.pageCount)
+        assertEquals(-1, setT.hero)
+        assertEquals(layout.grid.slots[0].w, setT.slots[0].w, 0.01f)
     }
 
     @Test fun folderTilesBoostTowardLargeButNotPastIt() {
@@ -540,6 +568,48 @@ class HubTest {
         assertEquals(1f, Anim.progress(Anim.totalMs(d), d), 0f)
         // The deepest tile of a full portrait page (row 4, col 3) settles in ~600 ms.
         assertTrue(Anim.totalMs(Anim.delayFor(4, 3)) <= 600f)
+    }
+
+    // ---- vertical scroll pages (0.9.0) -------------------------------------------------------
+
+    @Test fun everyChannelHasExactlyOneScrollPage() {
+        val hub = HubBuilder.build(apps, emptyList(), emptyList(), settings, folders = folders)
+        assertEquals(hub.channels.size, hub.pages.size)
+        assertTrue(hub.channels.all { it.pageCount == 1 })
+        assertTrue(hub.channels.withIndex().all { (i, ch) -> ch.firstPage == i })
+    }
+
+    @Test fun gridRowsStackUnderTheHero() {
+        val layout = Layout.portrait(1080, 2400, TileSize.MEDIUM)
+        val hub = HubBuilder.build(gameApps(13), emptyList(), emptyList(), settings, layout)
+        val page = hub.pages[hub.channels.first { it.title == "games" }.firstPage]
+        val t = page.template
+        val hero = t.slots[t.hero]
+        val grid = t.slots.filterIndexed { i, _ -> i != t.hero }
+        val k = grid[0].w / Metrics.SMALL_W
+        // The first grid row starts one (scaled) gutter under the fixed hero.
+        assertEquals(hero.bottom + Metrics.GUTTER * k, t.gridTop, 0.01f)
+        assertEquals(t.gridTop, grid.minOf { it.y }, 0.01f)
+        // Rows stack at a uniform pitch: tile height plus the same gutter.
+        val rows = grid.map { it.y }.distinct().sorted()
+        assertTrue(rows.size > 1)
+        assertEquals(grid[0].h + Metrics.GUTTER * k, rows[1] - rows[0], 0.01f)
+        // And the content height is the hero zone plus the stacked rows.
+        assertEquals(t.gridTop + Scroll.contentHeight(rows.size, grid[0].h, Metrics.GUTTER * k), t.h, 0.01f)
+    }
+
+    @Test fun settingsGearBoxClearsTheClockAndClears48dp() {
+        // Clock right-aligned ending at x=746 with 104-wide text, strip baseline y=40.
+        val box = Metrics.settingsGearBox(746f, 40f, 104f)
+        // The box ends GEAR_GAP left of the clock text: it never overlaps the clock.
+        assertEquals(746f - 104f - Metrics.GEAR_GAP, box.right, 0.01f)
+        assertEquals(Metrics.GEAR_BOX, box.w, 0f)
+        assertEquals(Metrics.GEAR_BOX, box.h, 0f)
+        // Design px are 72-dpi points on a 96-dpi grid: 108 design px is 81dp,
+        // comfortably over the 48dp hit-target floor at every tile size.
+        assertTrue(box.w * 0.75f >= 48f)
+        // The box is centred on the clock text's own height.
+        assertEquals(Metrics.clockCenterY(40f), box.cy, 0.01f)
     }
 
     // ---- privacy policy entry ----------------------------------------------------------------

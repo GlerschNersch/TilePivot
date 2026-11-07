@@ -667,3 +667,106 @@ Play needs around the code.
   emulator AVD has none; see the v0.5.0 note above).
 - Work-profile badge overlay still awaits a glance on a device with a work profile
   (carried from 0.4.3).
+
+## App v0.9.0 (2026-11-06): vertical scrolling inside channels, settings gear
+
+Tester feedback drove both changes: people tried to swipe up through their
+apps and games and disliked paging sideways inside a channel, and settings --
+the last channel in the pivot -- took a long sideways trip to reach.
+
+### Vertical scroll pages
+
+- Every channel is now ONE page: the hero in its canonical Layout.heroBox
+  geometry at the top, fixed, and every other tile in a uniform grid under it
+  that scrolls vertically (Template.gridTop marks the split; the grid region
+  below the hero is the viewport, the stacked rows the content). Channels
+  without a hero (apps, settings) scroll their full grid the same way.
+  HubBuilder assembles the page from the channel's existing templates -- the
+  hero slot keeps its legacy index in the slot list, the grid takes the grid
+  template's tile size and column count (boost included), centred under the
+  hero -- so slot indices mean what they meant on the old first page.
+- Between channels nothing changed: horizontal pivot (strip swipe,
+  PAGE_UP/PAGE_DOWN, L1/R1, twist taps, channel/folder shortcut tiles), the
+  channel-slide animation, and the entry cascade on channel change only. The
+  cascade wave now runs over the rows visible at the landing scroll offset;
+  tiles below the fold are at rest until scrolled to.
+- Gestures use dominant-axis disambiguation: a vertical-dominant drag scrolls
+  the grid and releasing with velocity flings it (exponential decay, hard stop
+  at the edges, no rubber band); a horizontal-dominant drag pivots channels
+  as before. Taps are unchanged (first tap focuses, second activates).
+- DPAD moves through rows/columns geometrically as before, and focus moving
+  to a partially off-screen row scrolls the minimum amount to reveal it in
+  full (animated). BEHAVIOUR CHANGE: DPAD left/right at a row edge no longer
+  pages or crosses channels -- it wraps through the reading order to the
+  previous row's last tile / next row's first tile. Channel changes via keys
+  are PAGE_UP/PAGE_DOWN and the bumpers.
+- Each channel remembers its focused tile and its scroll offset across
+  visits (in-memory, like the old page/focus memory); positions are clamped
+  when a tile-size change shrinks the content. No page state was ever stored
+  in preferences (only channel-hidden flags), so there is nothing to migrate.
+- Home channel: the two wide shortcuts now close the scroll grid in both
+  orientations (the old portrait rule, generalised); the landscape
+  Template1HD mosaic with its fixed wide cells no longer shapes the home
+  page, though the hero still derives from its slot.
+- Scroll math is pure in home/Scroll.kt (rows, content height, max offset,
+  clamping, reveal offset, visible row range) and unit-tested in ScrollTest.
+- TalkBack: accessibility focus on a tile scrolls it into view; the host's
+  scroll forward/backward scrolls the grid by most of a viewport and falls
+  through to the next channel at the grid's end, as the old page scroll did.
+
+### Settings gear
+
+- A gear glyph sits in the clock strip on every channel, ending 16 design px
+  left of the clock text (Metrics.settingsGearBox), in the same stroked-gear
+  language as the settings tiles. Its hit box is 108 design px = 81dp,
+  comfortably over the 48dp floor, and it clears the pivot names, which live
+  in the twist band below the clock band. Tapping it jumps straight to the
+  settings channel as a normal channel change (slide + cascade).
+- On the settings channel itself the gear is drawn dimmed (alpha 90) and is
+  inert. It is not in the DPAD focus order; TalkBack exposes it as a
+  "Settings" button (disabled while settings is showing). One interaction to
+  know: at tile size LARGE in portrait, the hover chrome's home button can
+  overlap the gear's box, but that chrome exists only under a pointer, is
+  hit-tested first, and draws above the gear.
+
+### Test changes
+
+- New ScrollTest (11 tests): rows/content height/max offset/clamping, the
+  reveal cases (already visible, above, below, oversized, clamped at both
+  ends), and visible-row ranges including an offset landing in a gutter.
+- HubTest: appsChannelPagesHoldFifteen became appsChannelIsOneScrollPage
+  (the apps channel is one 31-tile scroll page of 7 rows, not 3 pages of
+  15); denseGamesChannelKeepsTheLayoutTemplates now asserts geometry
+  equivalence on the single page instead of template identity across two
+  pages; appsAndSettingsChannelsAreNeverBoosted asserts hero-less pages with
+  layout-sized cells instead of template identity; sparseGamesChannel
+  FillsThePanelAtMedium measures the fill over the first viewport of the
+  scroll grid instead of a whole page; heroRectIsCanonicalAcrossChannels
+  places pages at the panels' top (no more vertical centring);
+  portraitHubKeepsHeroAndShortcuts expects all 31 apps-channel tiles on the
+  one page. New: everyChannelHasExactlyOneScrollPage,
+  gridRowsStackUnderTheHero, settingsGearBoxClearsTheClockAndClears48dp.
+- Totals: 110 per variant (BackupTest 4, GamesTest 38, HostPathsTest 7, HubTest 50,
+  ScrollTest 11), 0 failures, debug and release, forced --rerun-tasks,
+  counted from the test-results XML (0.8.1 baseline: 96).
+
+### Emulator evidence
+
+Emulator only (Medium_Phone_API_36.1, 1080x2400 portrait, release build;
+  screenshots in ~/workspace/x360reborn/shots-vscroll/):
+- Apps channel: a vertical swipe scrolled the grid (v3_apps_top.png ->
+  v4_apps_scrolled.png: the search row leaves the top, Camera/Chrome rise,
+  Drive/Gmail rows enter from below).
+- A horizontal swipe on the scrolled apps grid pivoted to the settings
+  channel instead of scrolling (v5_pivot.png).
+- Six DPAD_DOWN presses from the search tile walked focus down the rows and
+  the view scrolled to keep the focused tile (Files) fully visible at the
+  bottom of the panel (v6_dpad.png).
+- The home channel overflows on the AVD, so the fixed hero is directly
+  evidenced: after a vertical swipe the AloyMobile hero sits in exactly the
+  same rect while the grid rows beneath it change (v7_home_top.png ->
+  v8_home_scrolled.png). The games channel's hero follows the same code path.
+- Gear: tapping it on the home channel landed on the settings channel, the
+  gear drawn dimmed there (v1_home.png -> v2_gear.png).
+- Logcat across the whole drive: no FATAL EXCEPTION, no dev.tilepivot crash
+  lines. The physical phone was not touched.
