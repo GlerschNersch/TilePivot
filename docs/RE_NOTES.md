@@ -549,6 +549,119 @@ On update, Android drops the old all-files grant along with the permission.
   on the emulator), SD-card and raw: mappings, and the unmappable-folder dialog; these
   rest on unit tests and code review.
 
+## App v0.8.1 (2026-11-06): store readiness (icon, release polish, privacy, listing pack)
+
+No launcher behaviour changes except one new settings tile. Everything else is what Google
+Play needs around the code.
+
+### What shipped
+
+- An original adaptive app icon (replacing the stock `sym_def_app_icon`).
+- Release builds minified (R8) with resource shrinking; platform backup off.
+- A privacy policy hosted on GitHub Pages and a "privacy policy" settings tile that opens it.
+- `store-assets/`: listing copy, Play declaration drafts, feature graphic, 7 screenshots.
+- Still zero permissions.
+
+### Icon
+
+- Design: pure geometry in the launcher's own language. One wide hero panel above a 2x2
+  grid of smaller tiles, flat (corner radius 1.2 of 108 units), light tiles on a vertical
+  green gradient (#128A12 to #055505, around the default theme's #008A00). The grid tiles
+  are 80% opacity so the hero reads first. No sphere, controller, "X" or any Microsoft mark.
+- Geometry: everything sits in a 44x44 box centred on the 108x108 adaptive canvas, so every
+  corner is inside the 33-unit safe radius (farthest corner 31.1). Hero 44x16, gap 3, cells
+  20.5x10.5.
+- Files: `drawable/ic_launcher_background.xml` (gradient vector),
+  `drawable/ic_launcher_foreground.xml` (five rounded-rect paths), `mipmap-anydpi-v26/
+  ic_launcher{,_round}.xml` (adaptive, with the foreground also as the monochrome layer for
+  themed icons), and legacy PNGs `mipmap-{m,h,xh,xxh,xxxh}dpi/ic_launcher{,_round}.png` at
+  48/72/96/144/192 px.
+- How the fallbacks are generated: `python -I tools/make_store_art.py` (Pillow). The script
+  defines the rectangles once and writes BOTH the vector XML and every raster from them, so
+  the PNGs can't drift from the vectors. Legacy icons render the centre 72 of 108 units
+  (what a launcher mask shows) into a rounded square with a 1.5 dp margin, or a
+  full-bleed circle (a margin made lint's IconLauncherShape check flag the round icon),
+  supersampled 8x and downscaled with Lanczos. Output is deterministic (two runs gave
+  byte-identical PNGs). With minSdk 33 the anydpi-v26 adaptive icon is always used; the
+  PNGs are belt-and-braces.
+- Store icon: `store-assets/icon-512.png`, the same art flattened full-bleed (Play applies
+  its own mask). `aapt dump badging` now reports `application-icon-*: 'res/BW.xml'` (the
+  adaptive icon; release resource-path shortening renames the file), not
+  sym_def_app_icon, and the old "ERROR getting 'android:icon'" line is gone.
+
+### Release polish
+
+- `isMinifyEnabled = true`, `isShrinkResources = true`, default
+  `proguard-android-optimize.txt` plus an empty `app/proguard-rules.pro`. Outcome: no keep
+  rules were needed. Release APK 2.3 MB -> about 235 KB. The MINIFIED build passed an
+  emulator smoke: launch, home / games / tv & movies / apps / settings channels render,
+  settings dialogs, SAF folder pick + scan (3 games), sidecar and STFS header covers,
+  launch reaching the Xendroid+ dialog, the privacy tile opening Chrome on the live
+  policy; no FATAL or missing-class errors in logcat.
+- `android:allowBackup="false"`. Rationale: the app has its own settings backup/restore,
+  and the picked-folder grants are device-local by design (deliberately excluded from the
+  settings backup), so a platform backup restore would bring back an inconsistent state
+  (settings from one device, no valid folder grants). `dataExtractionRules` stays: on
+  Android 12+ `allowBackup="false"` disables cloud backup but NOT device-to-device
+  transfer, and the rules keep `game_library.xml` out of that transfer.
+
+### Privacy policy
+
+- `docs/privacy-policy.html`: one self-contained page (light/dark aware), plain language,
+  TilePivot-specific: no personal data collected, no permissions (so no network), no
+  accounts/ads/analytics/SDKs, on-device only, the installed-app list for showing tiles,
+  local settings exported only through the in-app backup, the picked games folder
+  (read-only, system picker, revocable), the game hand-off to the separate emulator,
+  "TilePivot is not affiliated with Microsoft or Xbox.", GitHub issues as contact, last
+  updated November 6, 2026. `docs/.nojekyll` makes Pages serve `docs/` verbatim.
+- GitHub Pages enabled via `gh api` (source `main` / `/docs`, like Orbital). URL:
+  https://glerschnersch.github.io/TilePivot/privacy-policy.html. **Verified live:** 404
+  for about 30 s after enabling, then HTTP 200 with the right title, date and
+  non-affiliation line; also loaded in Chrome on the emulator from the app's tile.
+- In-app: the settings channel's "about" entry is Android's own device-info screen (no app
+  About dialog exists), so a new tile "privacy policy" sits right after it, on the
+  settings channel's second page. It is an external `Target.Action`
+  (`Apps.ACTION_PRIVACY`) that MainActivity turns into `ACTION_VIEW` on
+  `Apps.PRIVACY_POLICY_URL`. HubTest gains 2 tests (entry shape and URL; tile placement
+  after "about").
+
+### Store pack (`store-assets/`)
+
+- `listing.md`: title "TilePivot: Retro Tile Launcher" (30/30), short description 78/80,
+  full description 1953/4000 (all counted by script), Personalization, content-rating
+  notes, screenshot notes.
+- `play-declarations.md`: data safety (nothing collected or shared), privacy URL,
+  permissions (none; SAF folder), audience, and OPEN ITEMS: the closed-test requirement for
+  the "Vincus" account is unconfirmed; residual IP risk is the publisher's decision.
+- `feature-graphic.png`: 1024x500, the icon motif at scale plus "TilePivot" and "A retro
+  tile launcher" in Roboto Regular (Apache 2.0, from the Windows font folder or
+  `ROBOTO_TTF`), generated by the same `tools/make_store_art.py`.
+- Screenshots: what they actually show. Taken on the emulator in a TEMPORARY second
+  Android user (`pm create-user`, setup marked complete for that user only, TilePivot
+  installed with `pm install-existing`), so only the AVD's stock Google apps appear rather
+  than the other launcher projects installed for user 0; default theme, fresh settings,
+  no games folder. The user was removed afterwards and `stay_on_while_plugged_in` restored
+  to 2. Seven shots: home (Calendar hero over the app grid), tv & movies (only YouTube on
+  this AVD, so one hero tile; honest but sparse), apps with search, settings page 1,
+  settings page 2 (system shortcuts and privacy policy), the "pick a games folder"
+  invitation, and the theme picker. No games, covers or Microsoft marks are pictured, but
+  the in-app strings "xbox 360 games", "theme: xbox green", "Xbox 360 game folders" and the
+  theme name "Xbox Green" are visible in shots 4, 6 and 7; stock Google app icons appear
+  as launcher content. Captured at 1080x2400 and cropped (40 px top, 200 px bottom, no UI
+  removed) to 1080x2160, because Play rejects screenshots longer than 2:1.
+
+### Verification
+
+- Unit tests: 96 in each variant (BackupTest 4, GamesTest 38, HostPathsTest 7, HubTest 47),
+  counted from the test-results XML after `--rerun-tasks`, zero failures.
+- Release APK + AAB built; `aapt dump badging`: dev.tilepivot, TilePivot, 0.8.1 (18),
+  application-icon not sym_def_app_icon; `aapt dump permissions`: none. lintRelease:
+  0 errors, 3 warnings: two pre-existing (org.json test dependency version, fixed
+  orientation) and ObsoleteSdkInt on `mipmap-anydpi-v26`, kept because the brief specifies
+  that folder (with minSdk 33 it could be plain `mipmap-anydpi`).
+- Emulator smoke of the final minified 0.8.1 release APK: see the release-polish list above
+  (launch, channels, settings, no crash).
+
 ## Next
 - Hover chrome: first live visual check on hardware with a real pointing device (the
   emulator AVD has none; see the v0.5.0 note above).
