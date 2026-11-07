@@ -1,6 +1,8 @@
 package dev.x360reborn.home
 
 import dev.x360reborn.Apps
+import kotlin.math.max
+import kotlin.math.min
 
 enum class Category { GAME, VIDEO, MUSIC, OTHER }
 
@@ -149,20 +151,20 @@ object HubBuilder {
         for ((i, title) in titles.withIndex()) {
             val start = pages.size
             when (i) {
-                0 -> pages += homePage(layout.home, homeOrder, appsIndex, settingsIndex, heroSub)
-                appsIndex -> pages += gridPages(layout.grid, i, appsTiles(liveFolders, folderByChannel, alpha))
-                settingsIndex -> pages += gridPages(layout.grid, i, settings.map {
+                0 -> pages += homeChannel(layout, homeOrder, appsIndex, settingsIndex, heroSub)
+                appsIndex -> pages += gridChannel(layout.grid, i, appsTiles(liveFolders, folderByChannel, alpha))
+                settingsIndex -> pages += gridChannel(layout.grid, i, settings.map {
                     Tile(it.label, Target.Action(it.action, it.external), iconKey = it.iconKey,
                         glyph = if (it.iconKey == null) it.glyph else Glyph.NONE)
                 })
                 in folderByChannel -> {
                     val f = folderByChannel.getValue(i)
                     val (home, grid) = channelTemplates(layout, f.members.size)
-                    pages += contentPages(home, grid, i, f.members.map { appTile(byKey.getValue(it), f.id) })
+                    pages += heroChannel(home, grid, i, f.members.map { appTile(byKey.getValue(it), f.id) })
                 }
                 else -> {
                     val (home, grid) = channelTemplates(layout, content[i].size)
-                    pages += contentPages(home, grid, i, content[i])
+                    pages += heroChannel(home, grid, i, content[i])
                 }
             }
             channels += Channel(title, start, pages.size - start)
@@ -188,31 +190,93 @@ object HubBuilder {
 
     private fun appTile(a: AppInfo, folderId: String? = null) = Tile(a.label, Target.App(a.key), folderId = folderId)
 
-    private fun homePage(t: Template, order: List<AppInfo>, appsIndex: Int, settingsIndex: Int, heroSub: String): Page {
-        val tiles = arrayOfNulls<Tile>(t.slots.size)
+    /**
+     * The home channel (0.9.0): the first app rides the hero slot, every other app
+     * follows in the scroll grid, and the two wide shortcuts close the grid. The old
+     * portrait rule (shortcuts follow the last app) now holds in both orientations;
+     * the landscape mosaic's fixed wide cells are gone.
+     */
+    private fun homeChannel(layout: Layout, order: List<AppInfo>, appsIndex: Int, settingsIndex: Int, heroSub: String): Page {
         val shortcuts = listOf(
             Tile("all apps", Target.Channel(appsIndex), Kind.WIDE, glyph = Glyph.ALL_APPS),
             Tile("settings", Target.Channel(settingsIndex), Kind.WIDE, glyph = Glyph.SETTINGS),
         )
-        if (t.compact) {
-            // Keep the last cells for the shortcuts, fill apps, then drop the shortcuts into the
-            // first free cells: the reserved ones on a full page, right after the last app otherwise.
-            fillTemplate(t, tiles, order, heroSub, skip = t.wide.toSet())
-            val free = readingOrder(t).filter { tiles[it] == null }
-            shortcuts.forEachIndexed { i, s -> free.getOrNull(i)?.let { tiles[it] = s } }
-        } else {
-            t.wide.getOrNull(0)?.let { tiles[it] = shortcuts[0] }
-            t.wide.getOrNull(1)?.let { tiles[it] = shortcuts[1] }
-            fillTemplate(t, tiles, order, heroSub)
+        if (order.isEmpty()) {
+            // No apps at all: the shortcuts alone, in a plain hero-less grid.
+            val (t, _) = gridTemplate(layout.grid, shortcuts.size)
+            return Page(0, t.copy(wide = listOf(0, 1)), shortcuts)
         }
-        return Page(0, t, tiles.toList().filterNotNullPreservingSlots())
+        val gridTiles = order.drop(1).map(::appTile) + shortcuts
+        val (t, heroIndex) = scrollTemplate(layout.home, layout.grid, gridTiles.size)
+        val tiles = ArrayList<Tile>(gridTiles.size + 1)
+        tiles += gridTiles
+        tiles.add(heroIndex, Tile(order[0].label, Target.App(order[0].key), Kind.HERO, sub = heroSub))
+        // The shortcuts are the grid's last two tiles; record their page slots as wide.
+        val wide = (gridTiles.size - 2 until gridTiles.size).map { if (it >= heroIndex) it + 1 else it }
+        return Page(0, t.copy(wide = wide), tiles)
     }
 
-    private fun contentPages(home: Template, grid: Template, channel: Int, tiles: List<Tile>): List<Page> {
-        val first = arrayOfNulls<Tile>(home.slots.size)
-        val used = fillTiles(home, first, tiles)
-        val page = Page(channel, home, first.toList().filterNotNullPreservingSlots())
-        return listOf(page) + gridPages(grid, channel, tiles.drop(used), allowEmpty = false)
+    /** A content or folder channel: the first tile is promoted to the hero, the rest scroll. */
+    private fun heroChannel(home: Template, grid: Template, channel: Int, tiles: List<Tile>): Page {
+        if (tiles.isEmpty()) return Page(channel, grid, emptyList())
+        val (t, heroIndex) = scrollTemplate(home, grid, tiles.size - 1)
+        val ordered = ArrayList<Tile>(tiles.size)
+        ordered += tiles.drop(1)
+        ordered.add(heroIndex, tiles[0].copy(kind = Kind.HERO))
+        return Page(channel, t, ordered)
+    }
+
+    /** A hero-less channel (apps, settings): every tile in the one scroll grid. */
+    private fun gridChannel(grid: Template, channel: Int, tiles: List<Tile>): Page {
+        val (t, _) = gridTemplate(grid, tiles.size)
+        return Page(channel, t, tiles)
+    }
+
+    /**
+     * The one scroll page of a hero channel (0.9.0): [home] supplies the hero slot,
+     * [grid] the grid's tile size and column count (both already carry the channel's
+     * boost). The hero keeps its template box, centred in the page, and the grid
+     * hangs under it centred the same way, so every channel's hero lands on the
+     * layout's canonical rect and the page is exactly as wide as the wider of the
+     * two. The hero slot keeps its legacy index in the slot list, so slot indices
+     * mean what they meant on the old first page. Returns the template and the
+     * hero's slot index.
+     */
+    private fun scrollTemplate(home: Template, grid: Template, gridCount: Int): Pair<Template, Int> {
+        val heroBox = home.slots[home.hero]
+        val cell = grid.slots.first()
+        val k = cell.w / Metrics.SMALL_W
+        val cols = grid.slots.map { it.x }.distinct().size.coerceAtLeast(1)
+        val gutter = Metrics.GUTTER * k
+        val gridW = cols * cell.w + (cols - 1) * gutter
+        val pageW = max(gridW, heroBox.w)
+        val gridTop = heroBox.bottom + gutter
+        val slots = ArrayList<Box>(gridCount + 1)
+        val gx = (pageW - gridW) / 2f
+        for (i in 0 until gridCount) {
+            slots += Box(gx + (i % cols) * (cell.w + gutter), gridTop + (i / cols) * (cell.h + gutter), cell.w, cell.h)
+        }
+        val heroIndex = min(home.hero, gridCount)
+        slots.add(heroIndex, Box((pageW - heroBox.w) / 2f, heroBox.y, heroBox.w, heroBox.h))
+        val h = if (gridCount > 0) gridTop + Scroll.contentHeight(Scroll.rowsFor(gridCount, cols), cell.h, gutter)
+            else heroBox.bottom
+        return Template(pageW, h, slots, hero = heroIndex, gridTop = gridTop) to heroIndex
+    }
+
+    /** The one scroll page of a hero-less channel: [count] tiles of [grid]'s size and columns. */
+    private fun gridTemplate(grid: Template, count: Int): Pair<Template, Int> {
+        val cell = grid.slots.firstOrNull()
+            ?: return Template(0f, 0f, emptyList(), hero = -1) to -1
+        val k = cell.w / Metrics.SMALL_W
+        val cols = grid.slots.map { it.x }.distinct().size.coerceAtLeast(1)
+        val gutter = Metrics.GUTTER * k
+        val slots = ArrayList<Box>(count)
+        for (i in 0 until count) {
+            slots += Box((i % cols) * (cell.w + gutter), (i / cols) * (cell.h + gutter), cell.w, cell.h)
+        }
+        val w = cols * cell.w + (cols - 1) * gutter
+        val h = Scroll.contentHeight(Scroll.rowsFor(count, cols), cell.h, gutter)
+        return Template(w, h, slots, hero = -1) to -1
     }
 
     /**
@@ -222,48 +286,6 @@ object HubBuilder {
      */
     private fun channelTemplates(layout: Layout, tileCount: Int): Pair<Template, Template> =
         layout.channelTemplates(Metrics.effectiveSize(layout.size, tileCount))
-
-    /** Hero slot takes the first tile (promoted to HERO), the open slots take the rest in reading order. */
-    private fun fillTiles(t: Template, tiles: Array<Tile?>, items: List<Tile>): Int {
-        var n = 0
-        if (items.isNotEmpty() && t.hero >= 0) {
-            tiles[t.hero] = items[n++].copy(kind = Kind.HERO)
-        }
-        val open = readingOrder(t).filter { tiles[it] == null }
-        for (slot in open) {
-            if (n >= items.size) break
-            tiles[slot] = items[n++]
-        }
-        return n
-    }
-
-    /** Hero slot takes the first app, the remaining open slots take the rest in reading order. */
-    private fun readingOrder(t: Template) =
-        t.slots.indices.sortedWith(compareBy({ t.slots[it].y }, { t.slots[it].x }))
-
-    private fun fillTemplate(t: Template, tiles: Array<Tile?>, apps: List<AppInfo>, heroSub: String, skip: Set<Int> = emptySet()): Int {
-        var n = 0
-        if (apps.isNotEmpty() && t.hero >= 0) {
-            val a = apps[n++]
-            tiles[t.hero] = Tile(a.label, Target.App(a.key), Kind.HERO, sub = heroSub)
-        }
-        // Reading order, with the reserved cells taken off the end of the page.
-        val open = readingOrder(t).filter { tiles[it] == null && it !in skip }
-        for (slot in open) {
-            if (n >= apps.size) break
-            tiles[slot] = appTile(apps[n++])
-        }
-        return n
-    }
-
-    private fun gridPages(t: Template, channel: Int, tiles: List<Tile>, allowEmpty: Boolean = true): List<Page> {
-        val per = t.slots.size
-        if (tiles.isEmpty()) return if (allowEmpty) listOf(Page(channel, t, emptyList())) else emptyList()
-        return tiles.chunked(per).map { Page(channel, t, it) }
-    }
-
-    private fun List<Tile?>.filterNotNullPreservingSlots(): List<Tile> =
-        map { it ?: EMPTY }
 
     /** Placeholder for template slots with nothing to show; never focusable. */
     val EMPTY = Tile("", Target.Action(""))
