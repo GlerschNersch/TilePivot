@@ -24,6 +24,35 @@ object AvatarModel {
     const val HEAD_R = 0.20f
     const val HEIGHT = 1.60f
 
+    /** Joint names in bone order; L is the figure's left (+x). */
+    val BONES = listOf("pelvis", "spine", "chest", "neck", "head",
+        "upperArm.L", "foreArm.L", "hand.L", "upperArm.R", "foreArm.R", "hand.R",
+        "thigh.L", "shin.L", "foot.L", "thigh.R", "shin.R", "foot.R")
+    private val PARENTS = intArrayOf(-1, 0, 1, 2, 3, 2, 5, 6, 2, 8, 9, 0, 11, 12, 0, 14, 15)
+    private val JOINTS = floatArrayOf(
+        0f, 0.66f, 0f, 0f, 0.8f, 0f, 0f, 0.96f, 0f, 0f, 1.04f, 0f, 0f, 1.13f, 0f,
+        0.205f, 0.965f, 0f, 0.255f, 0.73f, 0.01f, 0.275f, 0.52f, 0.03f,
+        -0.205f, 0.965f, 0f, -0.255f, 0.73f, 0.01f, -0.275f, 0.52f, 0.03f,
+        0.085f, 0.64f, 0f, 0.09f, 0.34f, 0.01f, 0.09f, 0.08f, 0f,
+        -0.085f, 0.64f, 0f, -0.09f, 0.34f, 0.01f, -0.09f, 0.08f, 0f)
+    private fun bone(name: String) = BONES.indexOf(name)
+
+    /** The rig for [buildRigged]; the figure's rest pose already has its arms down, so no base pose. */
+    val rig: Rig by lazy { Rig(PARENTS, JOINTS, BONES.withIndex().associate { it.value to it.index }) }
+
+    /** The avatar as one rigid-skinned part (each shape follows one bone) for [Animator]. */
+    fun buildRigged(look: AvatarLook): SkinnedPart {
+        val m = build(look)
+        val n = m.vertexCount; val pos = FloatArray(n * 3); val nrm = FloatArray(n * 3); val col = FloatArray(n * 3)
+        for (i in 0 until n) for (k in 0 until 3) {
+            pos[3*i+k] = m.vertices[i * AvatarMesh.STRIDE + k]; nrm[3*i+k] = m.vertices[i * AvatarMesh.STRIDE + 3 + k]; col[3*i+k] = m.vertices[i * AvatarMesh.STRIDE + 6 + k]
+        }
+        val bones = IntArray(n * 4); val w = FloatArray(n * 4)
+        for (i in 0 until n) { bones[4*i] = lastBones[i]; w[4*i] = 1f }
+        return SkinnedPart(pos, m.indices, bones, w, colors = col, restNormals = nrm)
+    }
+    private var lastBones = IntArray(0)
+
     fun build(look: AvatarLook): AvatarMesh {
         val b = Builder()
         val skin = rgb(look.skinRgb()); val hair = rgb(look.hairRgb())
@@ -33,26 +62,29 @@ object AvatarModel {
 
         // Legs and shoes.
         for (s in SIDES) {
-            b.tube(v(0.085f * s, 0.64f, 0f), v(0.09f * s, 0.34f, 0.01f), 0.075f, 0.065f, bottoms)
-            b.tube(v(0.09f * s, 0.34f, 0.01f), v(0.09f * s, 0.08f, 0f), 0.065f, 0.055f, bottoms)
+            val side = if (s > 0) "L" else "R"
+            b.bone = bone("thigh.$side"); b.tube(v(0.085f * s, 0.64f, 0f), v(0.09f * s, 0.34f, 0.01f), 0.075f, 0.065f, bottoms)
+            b.bone = bone("shin.$side"); b.tube(v(0.09f * s, 0.34f, 0.01f), v(0.09f * s, 0.08f, 0f), 0.065f, 0.055f, bottoms)
             b.ellipsoid(v(0.09f * s, 0.34f, 0.01f), v(0.066f, 0.066f, 0.066f), bottoms)
-            b.ellipsoid(v(0.09f * s, 0.045f, 0.035f), v(0.065f, 0.048f, 0.11f), shoes)
+            b.bone = bone("foot.$side"); b.ellipsoid(v(0.09f * s, 0.045f, 0.035f), v(0.065f, 0.048f, 0.11f), shoes)
         }
-        b.ellipsoid(v(0f, 0.66f, 0f), v(0.17f, 0.09f, 0.11f), bottoms) // hips
+        b.bone = bone("pelvis"); b.ellipsoid(v(0f, 0.66f, 0f), v(0.17f, 0.09f, 0.11f), bottoms) // hips
         // Torso: a soft barrel with a rounded top.
-        b.tube(v(0f, 0.66f, 0f), v(0f, 0.98f, 0f), 0.16f, 0.185f, top, zScale = 0.68f)
-        b.ellipsoid(v(0f, 0.98f, 0f), v(0.205f, 0.075f, 0.13f), top)
+        b.bone = bone("spine"); b.tube(v(0f, 0.66f, 0f), v(0f, 0.98f, 0f), 0.16f, 0.185f, top, zScale = 0.68f)
+        b.bone = bone("chest"); b.ellipsoid(v(0f, 0.98f, 0f), v(0.205f, 0.075f, 0.13f), top)
         // Arms, relaxed a little away from the body.
         for (s in SIDES) {
+            val side = if (s > 0) "L" else "R"
             val sh = v(0.205f * s, 0.965f, 0f); val el = v(0.255f * s, 0.73f, 0.01f); val wr = v(0.275f * s, 0.52f, 0.03f)
-            b.ellipsoid(sh, v(0.062f, 0.062f, 0.062f), top)
+            b.bone = bone("upperArm.$side"); b.ellipsoid(sh, v(0.062f, 0.062f, 0.062f), top)
             b.tube(sh, el, 0.058f, 0.05f, top)
-            b.ellipsoid(el, v(0.05f, 0.05f, 0.05f), skin)
+            b.bone = bone("foreArm.$side"); b.ellipsoid(el, v(0.05f, 0.05f, 0.05f), skin)
             b.tube(el, wr, 0.045f, 0.038f, skin)
-            b.ellipsoid(v(0.28f * s, 0.475f, 0.035f), v(0.042f, 0.06f, 0.03f), skin) // hand
+            b.bone = bone("hand.$side"); b.ellipsoid(v(0.28f * s, 0.475f, 0.035f), v(0.042f, 0.06f, 0.03f), skin) // hand
         }
         // Neck and head.
-        b.tube(v(0f, 1.0f, 0f), v(0f, 1.13f, 0f), 0.055f, 0.05f, skin)
+        b.bone = bone("neck"); b.tube(v(0f, 1.0f, 0f), v(0f, 1.13f, 0f), 0.055f, 0.05f, skin)
+        b.bone = bone("head")
         b.ellipsoid(v(0f, HEAD_Y, 0f), v(HEAD_R * 0.95f, HEAD_R * 1.05f, HEAD_R * 0.97f), skin)
         for (s in SIDES) b.ellipsoid(v(0.19f * s, HEAD_Y, -0.01f), v(0.025f, 0.05f, 0.035f), skin) // ears
         // Face: eyes (white + pupil), brows, nose, mouth.
@@ -64,6 +96,7 @@ object AvatarModel {
         b.ellipsoid(v(0f, 1.27f, 0.188f), v(0.022f, 0.03f, 0.022f), mix(skin, dark, 0.06f))
         b.ellipsoid(v(0f, 1.205f, 0.172f), v(0.052f, 0.012f, 0.012f), lips)
         hairMesh(b, look.hairStyle(), hair)
+        lastBones = b.boneOf.toIntArray()
         return b.mesh()
     }
 
@@ -101,7 +134,10 @@ object AvatarModel {
     /** Accumulates parts into one interleaved mesh. */
     private class Builder {
         val vs = ArrayList<Float>(40000); val ix = ArrayList<Int>(40000)
+        /** The bone each vertex follows ([buildRigged]); shapes take the current [bone]. */
+        var bone = 0; val boneOf = ArrayList<Int>(5000)
         private fun add(p: FloatArray, n: FloatArray, c: FloatArray): Int {
+            boneOf += bone
             val i = vs.size / AvatarMesh.STRIDE
             vs += p[0]; vs += p[1]; vs += p[2]; vs += n[0]; vs += n[1]; vs += n[2]; vs += c[0]; vs += c[1]; vs += c[2]
             return i

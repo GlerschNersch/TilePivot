@@ -67,6 +67,8 @@ class AvatarActivity : Activity() {
         button("Top") { saveLook(view.look.copy(top = (view.look.top + 1) % AvatarLook.CLOTHES.size)) }
         button("Bottoms") { saveLook(view.look.copy(bottoms = (view.look.bottoms + 1) % AvatarLook.CLOTHES.size)) }
         button("Shoes") { saveLook(view.look.copy(shoes = (view.look.shoes + 1) % AvatarLook.SHOES.size)) }
+        button("Wave") { view.renderer.emote(Animator.Emote.WAVE) }
+        button("Cheer") { view.renderer.emote(Animator.Emote.CHEER) }
         if (AvatarPacks.decoder != null) button("Console pack…") { openPack() }
         button("Done") { finish() }
     }
@@ -124,6 +126,8 @@ class AvatarActivity : Activity() {
         }
         button("Skin") { saveLook(view.look.copy(skin = (view.look.skin + 1) % AvatarLook.SKIN.size)); rebuild() }
         button("Hair colour") { saveLook(view.look.copy(hairColor = (view.look.hairColor + 1) % AvatarLook.HAIR_COLORS.size)); rebuild() }
+        button("Wave") { view.renderer.emote(Animator.Emote.WAVE) }
+        button("Cheer") { view.renderer.emote(Animator.Emote.CHEER) }
         button("TilePivot avatar") { outfit = outfit.copy(active = false); savePack(); pack = null; view.showPack(null); ownButtons() }
         button("Done") { finish() }
     }
@@ -137,8 +141,8 @@ class AvatarActivity : Activity() {
         val skin = view.look.skinRgb(); val hair = view.look.hairRgb()
         status.text = items.joinToString(" · ") { it.name }
         worker.execute {
-            val parts = items.flatMap { runCatching { p.load(it, skin, hair) }.getOrDefault(emptyList()) }
-            main.post { if (!isDestroyed && pack === p) view.showPack(parts) }
+            val model = runCatching { p.outfit(items, skin, hair) }.onFailure { Log.w(TAG, "outfit failed", it) }.getOrNull()
+            main.post { if (!isDestroyed && pack === p && model != null) view.showPack(model) }
         }
     }
 
