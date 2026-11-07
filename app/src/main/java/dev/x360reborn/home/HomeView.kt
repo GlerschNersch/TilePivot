@@ -539,6 +539,7 @@ class HomeView(
         canvas.scale(s, s)
         val (tScale, tAlpha) = transState(now)
         if (tAlpha <= 0f) {
+            onAvatarStage?.invoke(null)  // hub hidden: no avatar over the launched app
             canvas.drawText(hubClock(), L.clockX, L.clockY, clockText)
             canvas.restore()
             if (trans != null) postInvalidateOnAnimation() else lastFrame = 0L
@@ -568,6 +569,7 @@ class HomeView(
         drawTwist(canvas, cp, now)
         if (transforming) canvas.restore()
         canvas.drawText(hubClock(), L.clockX, L.clockY, clockText)
+        reportAvatarStage(tScale, tAlpha)
         drawGear(canvas)
         drawProfile(canvas)
         drawHoverChrome(canvas)
@@ -903,8 +905,9 @@ class HomeView(
         }
         canvas.drawRect(0f, b.h * 170f / 320f, b.w, b.h, fill)
         fill.shader = null
-        // The home channel's staged player figure stands over the art, under the text.
-        if (figure) drawAvatarFigure(canvas, b)
+        // The home channel's staged player figure stands over the art, under the text
+        // (the live 3D avatar takes its place when it is on).
+        if (figure && !avatar3d) drawAvatarFigure(canvas, b)
         val primary = TextUtils.ellipsize(tile.label, heroPrimary, b.w - 40f, TextUtils.TruncateAt.END)
         canvas.drawText(primary, 0, primary.length, 20f, b.h - (if (tile.sub.isEmpty()) 18f else 40f), heroPrimary)
         if (tile.sub.isNotEmpty()) canvas.drawText(tile.sub, 20f, b.h - 16f, heroSecondary)
@@ -1141,6 +1144,43 @@ class HomeView(
             canvas.drawText(c.title, x, baseline, twistText)
         }
         twistText.alpha = 255
+    }
+
+    // ---- home avatar stage (0.10.0) ---------------------------------------------------------
+
+    /** Where the 3D avatar stands, in view px, plus the hub's fade and the focused tile's centre (px, or NaN). */
+    class AvatarStage(val left: Float, val top: Float, val width: Float, val height: Float, val alpha: Float,
+                      val focusX: Float, val focusY: Float)
+
+    /** Called every hub frame with the home hero's figure stage, or null when it is off screen / hidden. */
+    var onAvatarStage: ((AvatarStage?) -> Unit)? = null
+
+    /** The live 3D avatar is shown on the stage, so the flat 2D figure is not drawn. */
+    var avatar3d = false
+        set(v) { if (field != v) { field = v; invalidate() } }
+
+    private fun reportAvatarStage(tScale: Float, tAlpha: Float) {
+        val cb = onAvatarStage ?: return
+        val home = hub.channels.getOrNull(0)?.firstPage
+        val p = home?.let { hub.pages.getOrNull(it) }
+        val hero = p?.template?.hero ?: -1
+        if (p == null || hero < 0 || !p.focusable(hero) || tAlpha <= 0.01f || !avatar3d) { cb(null); return }
+        val b = p.template.slots[hero]
+        val fig = AvatarFigure.layout(b.w, b.h).body
+        // The stage: the figure's spot, wider for arm swings and taller for raised arms.
+        val sw = fig.h * 0.95f; val sh = fig.h * 1.3f
+        val dx = pageX(home) + b.x + fig.cx - sw / 2f
+        val dy = L.panelsY + b.y + fig.bottom - sh
+        fun sx(x: Float) = ox + ((x - L.w / 2f) * tScale + L.w / 2f) * s
+        fun sy(y: Float) = oy + ((y - L.h / 2f) * tScale + L.h / 2f) * s
+        val l = sx(dx); val t = sy(dy); val r = sx(dx + sw); val bt = sy(dy + sh)
+        if (r < 0f || l > width) { cb(null); return }
+        var fx = Float.NaN; var fy = Float.NaN
+        if (focusPage == home && !twistFocused && p.focusable(focusSlot)) {
+            val fb = p.template.slots[focusSlot]
+            fx = sx(pageX(home) + fb.cx); fy = sy(L.panelsY + fb.cy - if (isGridSlot(home, focusSlot)) vOff(home) else 0f)
+        }
+        cb(AvatarStage(l, t, r - l, bt - t, tAlpha, fx, fy))
     }
 
     /** The settings channel's index, or -1 when the hub has none (it always does). */

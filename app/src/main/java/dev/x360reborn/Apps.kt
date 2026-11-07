@@ -348,6 +348,11 @@ class Apps(
         return e.commit()
     }
 
+    /** The live 3D avatar on the home tile (default on). */
+    var homeAvatar: Boolean
+        get() = prefs.getBoolean("homeAvatar", true)
+        set(v) = prefs.edit().putBoolean("homeAvatar", v).apply()
+
     fun channelHidden(title: String) = prefs.getBoolean(HIDE + title, false)
 
     fun setChannelHidden(title: String, hidden: Boolean) =
@@ -362,6 +367,7 @@ class Apps(
             SettingsEntry(xboxEntryLabel(xboxFolders, xboxCount), ACTION_XBOX, glyph = Glyph.GAMEPAD, external = false),
             profileEntry(prefs.getString(PROFILE_NAME, "")!!),
             SettingsEntry("avatar", ACTION_AVATAR, glyph = Glyph.PROFILE, external = true),
+            SettingsEntry("home avatar: ${if (homeAvatar) "shown" else "hidden"}", ACTION_HOME_AVATAR, glyph = Glyph.PROFILE, external = false),
             SettingsEntry("theme: ${Themes.byId(themeId).name.lowercase()}", ACTION_THEME, glyph = Glyph.THEME, external = false),
             SettingsEntry("tile size: ${tileSize.label}", ACTION_TILE_SIZE, glyph = Glyph.TILE_SIZE, external = false),
             SettingsEntry("background: ${bgStyle.label}", ACTION_BG, external = false),
@@ -393,6 +399,8 @@ class Apps(
         fun profileEntry(name: String) =
             SettingsEntry(if (name.isEmpty()) "profile" else "profile: $name", ACTION_PROFILE, glyph = Glyph.PROFILE, external = false)
 
+        /** Launcher-internal action: show/hide the live 3D avatar on the home tile. */
+        const val ACTION_HOME_AVATAR = "dev.x360reborn.HOME_AVATAR"
         /** Opens the 3D avatar screen (AvatarActivity); it leaves the hub like any activity. */
         const val ACTION_AVATAR = "dev.x360reborn.AVATAR"
         /** Launcher-internal action: change the profile picture or name. */

@@ -88,7 +88,14 @@ class MainActivity : Activity() {
             val pic = profile.loadPicture()
             main.post { view.profilePicture = pic }
         }
-        setContentView(view)
+        overlay = dev.x360reborn.avatar.AvatarOverlay(this) { openAvatar() }
+        setContentView(android.widget.FrameLayout(this).apply {
+            addView(view)
+            addView(this@MainActivity.overlay, android.widget.FrameLayout.LayoutParams(1, 1))
+        })
+        overlay.visibility = android.view.View.GONE
+        view.avatar3d = apps.homeAvatar
+        view.onAvatarStage = ::placeAvatar
         window.insetsController?.apply {
             hide(WindowInsets.Type.statusBars())
             systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
@@ -105,6 +112,10 @@ class MainActivity : Activity() {
         super.onResume()
         main.post(clock)
         refreshAvatarHead()
+        resumed = true
+        view.avatar3d = apps.homeAvatar
+        refreshAvatarScene()
+        view.invalidate()  // re-report the stage now that we are resumed
         // Coming back from something we launched: the hub flies back in (TransBackTo).
         if (leftForApp) {
             leftForApp = false
@@ -137,7 +148,65 @@ class MainActivity : Activity() {
         main.postDelayed(stillHere, HANDOFF_GUARD_MS)
     }
 
+    // ---- the live avatar on the home tile ------------------------------------------------------
+
+    private lateinit var overlay: dev.x360reborn.avatar.AvatarOverlay
+    private var resumed = false
+    private var stageShown = false
+    private var lastHomeWave = 0L
+    private var avatarSceneKey: String? = null
+
+    /** Follows the hub's figure stage every frame: position, fade, look toward the focused tile. */
+    private fun placeAvatar(st: dev.x360reborn.home.HomeView.AvatarStage?) {
+        val show = st != null && resumed && apps.homeAvatar
+        if (!show) {
+            if (overlay.visibility != android.view.View.GONE) overlay.visibility = android.view.View.GONE
+            overlay.active = false; stageShown = false; return
+        }
+        st!!
+        val w = st.width.toInt().coerceAtLeast(1); val h = st.height.toInt().coerceAtLeast(1)
+        val lp = overlay.layoutParams
+        if (lp.width != w || lp.height != h) { lp.width = w; lp.height = h; overlay.layoutParams = lp }
+        overlay.translationX = st.left; overlay.translationY = st.top; overlay.alpha = st.alpha
+        if (overlay.visibility != android.view.View.VISIBLE) overlay.visibility = android.view.View.VISIBLE
+        overlay.active = true
+        // Look toward the focused tile (screen right = turn right); straight ahead otherwise.
+        val cx = st.left + st.width / 2f
+        val yaw = if (st.focusX.isNaN()) 0f else ((st.focusX - cx) / st.width * 0.35f).coerceIn(-0.9f, 0.9f)
+        overlay.renderer.lookAt(yaw)
+        if (!stageShown) {
+            stageShown = true
+            val now = android.os.SystemClock.uptimeMillis()
+            if (now - lastHomeWave > 20_000) { lastHomeWave = now; overlay.renderer.emote(dev.x360reborn.avatar.Animator.Emote.WAVE) }
+        }
+    }
+
+    /** Loads the avatar the user set up (a pack outfit when this build reads packs, else TilePivot's own). */
+    private fun refreshAvatarScene() {
+        val prefs = getSharedPreferences("hub", MODE_PRIVATE)
+        val look = dev.x360reborn.avatar.AvatarLook.decode(prefs.getString(dev.x360reborn.avatar.AvatarActivity.PREF, null))
+        val outfit = dev.x360reborn.avatar.PackOutfit.decode(prefs.getString(dev.x360reborn.avatar.AvatarActivity.PREF_PACK, null))
+        val packFile = dev.x360reborn.avatar.AvatarPacks.file(filesDir)
+        val usePack = outfit.active && dev.x360reborn.avatar.AvatarPacks.decoder != null && packFile.isFile
+        val key = look.encode() + "|" + (if (usePack) outfit.encode() else "own")
+        if (key == avatarSceneKey) return
+        avatarSceneKey = key
+        loader.execute {
+            if (usePack) {
+                val model = runCatching {
+                    val pack = avatarPack ?: dev.x360reborn.avatar.AvatarPacks.decoder!!.open(packFile).also { avatarPack = it }
+                    pack.outfit(outfit.withDefaults(pack).items(pack), look.skinRgb(), look.hairRgb())
+                }.onFailure { Log.w(TAG, "home avatar pack failed", it) }.getOrNull()
+                if (model != null) { overlay.renderer.setScene(model.parts, model.rig); return@execute }
+            }
+            overlay.renderer.setScene(listOf(dev.x360reborn.avatar.AvatarModel.buildRigged(look)), dev.x360reborn.avatar.AvatarModel.rig)
+        }
+    }
+    @Volatile private var avatarPack: dev.x360reborn.avatar.AvatarPack? = null
+
     override fun onPause() {
+        resumed = false
+        overlay.active = false
         main.removeCallbacks(clock)
         main.removeCallbacks(stillHere)
         super.onPause()
@@ -233,6 +302,7 @@ class MainActivity : Activity() {
     private fun launch(tile: Tile, bounds: android.graphics.Rect) {
         when (val t = tile.target) {
             is Target.App -> {
+                if (overlay.active) overlay.renderer.emote(dev.x360reborn.avatar.Animator.Emote.CHEER)
                 // The hub is already hidden (TransFrom), so every early exit must bring it back.
                 val cn = apps.component(t.key)
                 val user = apps.user(t.key)
@@ -266,6 +336,11 @@ class MainActivity : Activity() {
                 gameLibrary()
             } else if (t.name == Apps.ACTION_PROFILE) {
                 profileOptions()
+            } else if (t.name == Apps.ACTION_HOME_AVATAR) {
+                apps.homeAvatar = !apps.homeAvatar
+                view.avatar3d = apps.homeAvatar
+                Toast.makeText(this, "Home avatar: ${if (apps.homeAvatar) "shown" else "hidden"}", Toast.LENGTH_SHORT).show()
+                reload()
             } else if (t.name == Apps.ACTION_AVATAR) {
                 openAvatar()
             } else if (t.name == Apps.ACTION_THEME) {

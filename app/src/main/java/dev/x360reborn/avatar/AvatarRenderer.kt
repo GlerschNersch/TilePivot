@@ -29,6 +29,8 @@ class AvatarRenderer(private val clear: Int) {
     @Volatile var yaw = 0.35f
     /** Extra framing control: 1 = whole figure; larger zooms toward the upper body. */
     @Volatile var zoom = 1f
+    /** Extra room above the head, as a fraction of the figure's height (raised arms, hops). */
+    @Volatile var headroom = 0f
 
     private var prog = 0; private var uMvp = 0; private var uModel = 0; private var uTex = 0; private var uUseTex = 0
     private val proj = FloatArray(16); private val view = FloatArray(16); private val model = FloatArray(16)
@@ -98,10 +100,10 @@ class AvatarRenderer(private val clear: Int) {
     /** Fits the scene's rest bounds (widest of x/z, since the figure turns) into the view. */
     private fun frame() {
         val fov = 30f; val t = tan(Math.toRadians(fov / 2.0)).toFloat(); val b = bounds
-        val h = b[3] - b[1]
+        val h = (b[3] - b[1]) * (1f + headroom)
         val bw = (b[2] - b[0]) * 1.08f; val bh = h * 1.08f / zoom
         // zoom > 1 frames the top 1/zoom of the figure (head and shoulders first).
-        val cy = if (zoom <= 1f) b[1] + h / 2f else b[3] - h / zoom / 2f
+        val cy = if (zoom <= 1f) b[1] + h / 2f else b[1] + h - h / zoom / 2f
         val dist = max(bh / 2f / t, bw / zoom / 2f / (t * aspect)) + 0.3f
         Matrix.perspectiveM(proj, 0, fov, aspect, 0.1f, dist + 5f)
         Matrix.setLookAtM(view, 0, 0f, cy + 0.04f, dist, 0f, cy, 0f, 0f, 1f, 0f)
