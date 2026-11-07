@@ -361,6 +361,7 @@ class Apps(
             // the game-library manager (add / remove folders, re-scan).
             SettingsEntry(xboxEntryLabel(xboxFolders, xboxCount), ACTION_XBOX, glyph = Glyph.GAMEPAD, external = false),
             profileEntry(prefs.getString(PROFILE_NAME, "")!!),
+            SettingsEntry("avatar", ACTION_AVATAR, glyph = Glyph.PROFILE, external = true),
             SettingsEntry("theme: ${Themes.byId(themeId).name.lowercase()}", ACTION_THEME, glyph = Glyph.THEME, external = false),
             SettingsEntry("tile size: ${tileSize.label}", ACTION_TILE_SIZE, glyph = Glyph.TILE_SIZE, external = false),
             SettingsEntry("background: ${bgStyle.label}", ACTION_BG, external = false),
@@ -392,6 +393,8 @@ class Apps(
         fun profileEntry(name: String) =
             SettingsEntry(if (name.isEmpty()) "profile" else "profile: $name", ACTION_PROFILE, glyph = Glyph.PROFILE, external = false)
 
+        /** Opens the 3D avatar screen (AvatarActivity); it leaves the hub like any activity. */
+        const val ACTION_AVATAR = "dev.x360reborn.AVATAR"
         /** Launcher-internal action: change the profile picture or name. */
         const val ACTION_PROFILE = "dev.x360reborn.PROFILE"
         /** Same key [Profile] writes; read here only for the settings label. */

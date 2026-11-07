@@ -1094,6 +1094,10 @@ class HomeView(
     var profilePicture: Bitmap? = null
         set(v) { field = v; invalidate() }
 
+    /** The avatar's rendered head (transparent background), shown when no photo is chosen. */
+    var profileAvatar: Bitmap? = null
+        set(v) { field = v; invalidate() }
+
     /** The user's display name; empty shows the picture alone. */
     var profileName: String = ""
         set(v) {
@@ -1131,10 +1135,16 @@ class HomeView(
         } else {
             fill.color = Metrics.TILE_GREEN
             canvas.drawRect(p.x, p.y, p.right, p.bottom, fill)
-            fill.color = Metrics.TEXT
-            fill.alpha = 235
-            drawPersonGlyph(canvas, p.x + p.w * 0.1f, p.y + p.h * 0.1f, p.w * 0.8f)
-            fill.alpha = 255
+            val head = profileAvatar
+            if (head != null) {
+                iconRect.set(p.x, p.y, p.right, p.bottom)
+                canvas.drawBitmap(head, null, iconRect, bmpPaint)
+            } else {
+                fill.color = Metrics.TEXT
+                fill.alpha = 235
+                drawPersonGlyph(canvas, p.x + p.w * 0.1f, p.y + p.h * 0.1f, p.w * 0.8f)
+                fill.alpha = 255
+            }
         }
         if (chip.nameMaxW > 0f) {
             if (profileShownFor != chip.nameMaxW) {

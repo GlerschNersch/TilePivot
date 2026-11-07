@@ -104,6 +104,7 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         main.post(clock)
+        refreshAvatarHead()
         // Coming back from something we launched: the hub flies back in (TransBackTo).
         if (leftForApp) {
             leftForApp = false
@@ -265,6 +266,8 @@ class MainActivity : Activity() {
                 gameLibrary()
             } else if (t.name == Apps.ACTION_PROFILE) {
                 profileOptions()
+            } else if (t.name == Apps.ACTION_AVATAR) {
+                openAvatar()
             } else if (t.name == Apps.ACTION_THEME) {
                 themePicker()
             } else if (t.name == Apps.ACTION_BG) {
@@ -501,6 +504,8 @@ class MainActivity : Activity() {
     private fun profileOptions() {
         val labels = ArrayList<String>()
         val actions = ArrayList<() -> Unit>()
+        labels += "Avatar…"
+        actions += ::openAvatar
         labels += "Choose picture…"
         actions += ::pickProfilePicture
         if (view.profilePicture != null) {
@@ -516,6 +521,30 @@ class MainActivity : Activity() {
             .setTitle(profile.name.ifEmpty { "Profile" })
             .setItems(labels.toTypedArray()) { _, which -> actions.getOrNull(which)?.invoke() }
             .show()
+    }
+
+    /** The 3D avatar screen; the hub plays its leave transition and comes back on return. */
+    private fun openAvatar() {
+        startActivity(Intent(this, dev.x360reborn.avatar.AvatarActivity::class.java),
+            ActivityOptions.makeCustomAnimation(this, android.R.anim.fade_in, 0).toBundle())
+        handedOff()
+    }
+
+    /** The look the chip's head was last rendered for; re-rendered when it changes (see onResume). */
+    private var avatarShown: String? = null
+
+    /** Renders the avatar's head for the profile chip off the main thread (used when no photo is set). */
+    private fun refreshAvatarHead() {
+        val enc = getSharedPreferences("hub", MODE_PRIVATE).getString(dev.x360reborn.avatar.AvatarActivity.PREF, null)
+        if (enc == avatarShown && view.profileAvatar != null) return
+        avatarShown = enc
+        val look = dev.x360reborn.avatar.AvatarLook.decode(enc)
+        loader.execute {
+            val size = 128
+            val px = dev.x360reborn.avatar.AvatarSnapshot.headshot(dev.x360reborn.avatar.AvatarModel.build(look), size)
+            val bmp = android.graphics.Bitmap.createBitmap(px, size, size, android.graphics.Bitmap.Config.ARGB_8888)
+            main.post { view.profileAvatar = bmp }
+        }
     }
 
     /** The system photo picker: no permission, and TilePivot only ever sees the one photo picked. */
