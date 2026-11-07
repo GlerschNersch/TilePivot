@@ -639,6 +639,7 @@ class HomeView(
         // Settings tiles are controls whose labels carry state ("theme: Midnight"), so
         // the settings channel keeps the classic icon-over-label rendering (drawSmall).
         val labeled = hub.channels[p.channel].title == "settings"
+        val homeHero = hub.channels[p.channel].title == "home"
         // Entry cascade: only the page whose channel just became active animates, and
         // only while its wave is running; every other page draws at rest.
         val entryMs = if (page == cascadePage) cascadeElapsed(now) else -1f
@@ -668,14 +669,14 @@ class HomeView(
         // The hero, fixed at the top of the panel: it never scrolls, never clips.
         val hero = p.template.hero
         if (hero >= 0 && p.focusable(hero) && hero != focusedLast) {
-            drawTile(canvas, p.tiles[hero], p.template.slots[hero], x0, top, key(page, hero), now, labeled, delay(hero), entryMs)
+            drawTile(canvas, p.tiles[hero], p.template.slots[hero], x0, top, key(page, hero), now, labeled, delay(hero), entryMs, homeHero)
         }
         if (focusedLast == hero && hero >= 0) {
-            drawTile(canvas, p.tiles[hero], p.template.slots[hero], x0, top, key(page, hero), now, labeled, delay(hero), entryMs)
+            drawTile(canvas, p.tiles[hero], p.template.slots[hero], x0, top, key(page, hero), now, labeled, delay(hero), entryMs, homeHero)
         }
     }
 
-    private fun drawTile(canvas: Canvas, tile: Tile, b: Box, x0: Float, y0: Float, k: Int, now: Long, labeled: Boolean, entryDelayMs: Float = -1f, entryElapsedMs: Float = 0f) {
+    private fun drawTile(canvas: Canvas, tile: Tile, b: Box, x0: Float, y0: Float, k: Int, now: Long, labeled: Boolean, entryDelayMs: Float = -1f, entryElapsedMs: Float = 0f, homeHero: Boolean = false) {
         val f = focusAnim[k] ?: 0f
         val pressMs = if (k == pressKey) (now - pressStart).toFloat() else -1f
         val sc = Motion.scale(f, pressMs)
@@ -700,7 +701,7 @@ class HomeView(
         }
 
         when (tile.kind) {
-            Kind.HERO -> drawHero(canvas, tile, b)
+            Kind.HERO -> drawHero(canvas, tile, b, homeHero)
             else -> drawSmall(canvas, tile, b, labeled)
         }
 
@@ -876,7 +877,7 @@ class HomeView(
     private fun soften(src: Bitmap): Bitmap =
         Bitmap.createScaledBitmap(src, max(1, src.width / 12), max(1, src.height / 12), true)
 
-    private fun drawHero(canvas: Canvas, tile: Tile, b: Box) {
+    private fun drawHero(canvas: Canvas, tile: Tile, b: Box, figure: Boolean = false) {
         fill.color = Metrics.SLOT_DARK
         canvas.drawRect(rect, fill)
         drawAmbience(canvas, tile, b)
@@ -902,9 +903,84 @@ class HomeView(
         }
         canvas.drawRect(0f, b.h * 170f / 320f, b.w, b.h, fill)
         fill.shader = null
+        // The home channel's staged player figure stands over the art, under the text.
+        if (figure) drawAvatarFigure(canvas, b)
         val primary = TextUtils.ellipsize(tile.label, heroPrimary, b.w - 40f, TextUtils.TruncateAt.END)
         canvas.drawText(primary, 0, primary.length, 20f, b.h - (if (tile.sub.isEmpty()) 18f else 40f), heroPrimary)
         if (tile.sub.isNotEmpty()) canvas.drawText(tile.sub, 20f, b.h - 16f, heroSecondary)
+    }
+
+    /**
+     * The home channel's player figure (0.9.1): original geometry from
+     * [AvatarFigure], drawn in the app's flat style over the hero art.
+     * Clothing comes from the active theme (its tile accent in two tones),
+     * the head is a plain featureless circle -- a mannequin, not anyone's
+     * avatar -- and the whole thing is one static pass inside the hero's
+     * own draw: no animation, no extra invalidations. Decorative only;
+     * TalkBack never sees it.
+     */
+    private fun drawAvatarFigure(canvas: Canvas, b: Box) {
+        val f = AvatarFigure.layout(b.w, b.h)
+        val cloth = Metrics.TILE_GREEN
+        val clothDark = shade(cloth, 0.6f)
+        val clothLight = shade(cloth, 1.45f)
+        fill.style = Paint.Style.FILL
+        fill.shader = null
+        fill.alpha = 255
+        // The floor the figure stands on: a soft dark ellipse with the
+        // theme's floor colour at its heart.
+        fill.color = Color.argb(110, 0, 0, 0)
+        canvas.drawOval(f.floor.x, f.floor.y, f.floor.right, f.floor.bottom, fill)
+        fill.color = Metrics.FLOOR
+        fill.alpha = 70
+        val inset = f.floor.w * 0.18f
+        canvas.drawOval(f.floor.x + inset, f.floor.y + f.floor.h * 0.22f,
+            f.floor.right - inset, f.floor.bottom - f.floor.h * 0.22f, fill)
+        fill.alpha = 255
+        // Legs and shoes first: the torso overlaps the leg tops.
+        fill.color = clothDark
+        drawCapsule(canvas, f.legL)
+        drawCapsule(canvas, f.legR)
+        fill.color = FIGURE_SHOE
+        canvas.drawOval(f.shoeL.x, f.shoeL.y, f.shoeL.right, f.shoeL.bottom, fill)
+        canvas.drawOval(f.shoeR.x, f.shoeR.y, f.shoeR.right, f.shoeR.bottom, fill)
+        // Arms hang at the torso's sides, tilted a few degrees off vertical.
+        fill.color = cloth
+        drawArm(canvas, f.armL, -AvatarFigure.ARM_TILT_DEG)
+        drawArm(canvas, f.armR, AvatarFigure.ARM_TILT_DEG)
+        // Torso: main tone, a lighter chest band, a dark waistband.
+        fill.color = cloth
+        canvas.drawRoundRect(f.torso.x, f.torso.y, f.torso.right, f.torso.bottom,
+            f.torso.w * 0.32f, f.torso.w * 0.32f, fill)
+        fill.color = clothLight
+        canvas.drawRoundRect(f.chest.x, f.chest.y, f.chest.right, f.chest.bottom,
+            f.chest.h * 0.5f, f.chest.h * 0.5f, fill)
+        fill.color = clothDark
+        canvas.drawRoundRect(f.belt.x, f.belt.y, f.belt.right, f.belt.bottom,
+            f.belt.h * 0.5f, f.belt.h * 0.5f, fill)
+        // Head last, over the torso seam: one plain skin-tone circle.
+        fill.color = FIGURE_SKIN
+        canvas.drawCircle(f.head.cx, f.head.cy, f.head.w / 2f, fill)
+    }
+
+    /** A limb: a fully rounded rect (capsule) filling [r]. */
+    private fun drawCapsule(canvas: Canvas, r: Box) {
+        canvas.drawRoundRect(r.x, r.y, r.right, r.bottom, r.w / 2f, r.w / 2f, fill)
+    }
+
+    /** An arm capsule rotated [deg] about its shoulder (its top-centre). */
+    private fun drawArm(canvas: Canvas, r: Box, deg: Float) {
+        canvas.save()
+        canvas.rotate(deg, r.cx, r.y)
+        drawCapsule(canvas, r)
+        canvas.restore()
+    }
+
+    /** [color] scaled toward black (factor < 1) or white (factor > 1); alpha kept. */
+    private fun shade(color: Int, factor: Float): Int {
+        fun ch(v: Int) = if (factor <= 1f) (v * factor).roundToInt().coerceIn(0, 255)
+            else (v + (255 - v) * (factor - 1f)).roundToInt().coerceIn(0, 255)
+        return Color.argb(Color.alpha(color), ch(Color.red(color)), ch(Color.green(color)), ch(Color.blue(color)))
     }
 
     private fun drawIcon(canvas: Canvas, tile: Tile, x: Float, y: Float, size: Float, hero: Boolean = false) {
@@ -1715,6 +1791,11 @@ class HomeView(
         const val AMBIENCE_SCRIM = 0x99000000.toInt()
         /** Edge of the offscreen a glyph is rendered at for its ambience source. */
         const val GLYPH_PX = 144
+
+        /** The home figure's skin tone: one neutral original colour, every theme. */
+        const val FIGURE_SKIN = 0xFFEDBE96.toInt()
+        /** The home figure's shoes: a near-black neutral. */
+        const val FIGURE_SHOE = 0xFF26262A.toInt()
         /** Design px past the screen edge a page may reach and still be drawn (focus growth, shadow). */
         const val CULL_SLACK = 48f
         /** Accessibility virtual-view ids: tiles are TILE_BASE + slot, channels TWIST_BASE + index. */

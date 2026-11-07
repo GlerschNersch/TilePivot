@@ -770,3 +770,15 @@ Emulator only (Medium_Phone_API_36.1, 1080x2400 portrait, release build;
   gear drawn dimmed there (v1_home.png -> v2_gear.png).
 - Logcat across the whole drive: no FATAL EXCEPTION, no dev.tilepivot crash
   lines. The physical phone was not touched.
+
+## Avatar assets (2026-11-06, reference only)
+
+- `Guide.AvatarMiniCreator.avatarmc` XZP: 12 stock avatars, each as `avatar64NN.png`
+  (64x64 head-and-shoulders gamerpic on the blue sphere) + `avatarfbNN.png` (full body),
+  + `avatar_metadataNN.bin`. `AvatarEditor.MEDIA` XZP: 54 `gamerpic_background_N.png`
+  (large/small pairs) plus editor chrome. Collected into `re/out/avatar/` with contact sheets.
+- The 3D avatar data (`FFFE07DF00000002/AvatarAssetPack*.toc`, 14.7 MB + 1.2 MB) is a
+  header plus offset table followed by ~8.0 bit/byte payload, i.e. compressed or encrypted.
+  It is not decoded; `*.MsLiveAvatarAsset` (magic `STRB`) is the per-asset container.
+- None of this ships: it is Microsoft art. A TilePivot profile picture must be original
+  or user-supplied.
