@@ -20,12 +20,14 @@
 </head>
 <body>
 <h1>TilePivot — Privacy Policy</h1>
-<p class="muted">Last updated November 6, 2026</p>
+<p class="muted">Last updated November 7, 2026</p>
 
 <p><strong>The short version: TilePivot collects no personal data.</strong> TilePivot does not
-have the Android internet permission. In fact it declares no Android permissions at all, so it
-cannot send anything off your device. There are no accounts, no ads, no analytics, and no
-third-party SDKs. Everything TilePivot does happens on your device.</p>
+have the Android internet permission. It requests no Android permissions at all, so it cannot
+send anything off your device. There are no accounts, no ads, no analytics, and no third-party
+SDKs. Everything TilePivot does happens on your device. One optional feature, described below,
+can use notification access if you turn it on yourself in Android's settings; it is off unless
+you do.</p>
 
 <h2>What TilePivot uses, and why</h2>
 
@@ -45,6 +47,29 @@ picker. It reads file names and file headers there to list your games and show c
 It never writes to the folder and cannot see anything outside it. You can remove the folder in
 TilePivot's settings, and you can revoke the access in Android's system settings at any time.
 The folder choice is not included in TilePivot's settings backup.</p>
+
+<p><strong>How often you open apps (for the home avatar).</strong> The avatar on your home
+screen can step in front of the app you have opened most this week. To know which app that is,
+TilePivot counts how many times you open each app from the launcher, per day. Only the app's
+package name and a count are kept, never what you do inside the app, and only for the last 14
+days; older days are deleted automatically. The counts stay in TilePivot's private storage on
+your device. They are not included in the "back up settings" file.</p>
+
+<p><strong>Notification access, only if you turn it on.</strong> The home avatar can walk over
+to an app's tile when that app posts a notification. This needs notification access, which
+TilePivot never has unless you grant it yourself in Android's settings, and you can revoke it
+there at any time. When it is on, TilePivot uses only the name of the app that posted the
+notification, to find its tile. It never reads the notification's title, text, images or any
+other content, and it stores nothing about notifications.</p>
+
+<p><strong>Battery level and time of day.</strong> The home avatar looks sleepy late at night
+and when the battery is low, and perks up when you plug in the charger. TilePivot reads the
+battery level and charging state from Android's standard battery broadcast and the time from
+your device clock. Neither is stored.</p>
+
+<p><strong>Your avatar and profile.</strong> Your avatar's look, where you placed it on the
+screen, and the profile name and picture you choose are stored only in TilePivot's private
+storage on your device.</p>
 
 <p><strong>Launching a game.</strong> When you open a game, TilePivot hands its file path and
 title to the separate emulator app you installed (for example Xendroid+), on your device. That
