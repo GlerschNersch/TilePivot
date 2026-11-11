@@ -7,9 +7,9 @@ the app is created. Nothing here has been submitted; no console entry exists yet
 
 - **Does your app collect or share any of the required user data types?** No.
 - **Data collected:** None. **Data shared:** None.
-- **Basis (one line):** TilePivot has no INTERNET permission (it declares no permissions at
-  all) and contains no third-party SDKs, so no data can leave the device; all processing is
-  on-device.
+- **Basis (one line):** TilePivot has no INTERNET permission (its one declared permission is
+  REQUEST_DELETE_PACKAGES, for tile uninstall) and contains no third-party SDKs, so no data
+  can leave the device; all processing is on-device.
 - **Is all user data encrypted in transit?** Not applicable: nothing is transmitted.
 - **Do you provide a way for users to request that their data is deleted?** Not applicable:
   no data is collected. (Local settings are removed by uninstalling or clearing app data.)
@@ -26,8 +26,10 @@ Served from `docs/privacy-policy.html` via GitHub Pages (`main` / `docs`). Verif
 
 ## Permissions
 
-- **Declared permissions:** none. `aapt dump permissions` on the 0.8.1 release APK lists only
-  the package name.
+- **Declared permissions:** one, `android.permission.REQUEST_DELETE_PACKAGES` (a normal,
+  install-time permission, added by Session 64 on 2026-11-10): the tile menu's "Uninstall"
+  fires ACTION_DELETE, and Android shows its own confirmation. No INTERNET. (The 0.8.1 APK
+  declared none; re-run `aapt dump permissions` on the release APK before upload.)
 - **Sensitive / restricted permissions declaration form:** not needed (no
   MANAGE_EXTERNAL_STORAGE, no QUERY_ALL_PACKAGES, no accessibility service, no SMS/call
   log, no location).

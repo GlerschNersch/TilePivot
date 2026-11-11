@@ -55,7 +55,7 @@ into Play Console. Character counts were checked by script (Python `len()`), not
 > obtain it yourself.
 >
 > PRIVATE BY DESIGN
-> TilePivot declares no Android permissions, not even internet access. No accounts, no ads,
+> TilePivot has no internet permission; its only permission lets you uninstall an app from its tile. No accounts, no ads,
 > no analytics, no third-party SDKs; everything stays on your device.
 >
 > TilePivot is not affiliated with Microsoft or Xbox.
