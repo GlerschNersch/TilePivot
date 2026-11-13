@@ -33,12 +33,8 @@ Served from `docs/privacy-policy.html` via GitHub Pages (`main` / `docs`). Verif
 - **Sensitive / restricted permissions declaration form:** not needed (no
   MANAGE_EXTERNAL_STORAGE, no QUERY_ALL_PACKAGES, no accessibility service, no SMS/call
   log, no location).
-- **Storage access:** the optional games library uses a folder the user picks through the
-  Storage Access Framework (ACTION_OPEN_DOCUMENT_TREE), read-only, with a persisted grant the
-  user can remove in-app or revoke in system settings.
 - **Package visibility:** the manifest uses `<queries>` for launcher activities (MAIN /
-  LAUNCHER, which a home-screen launcher needs to list apps) and for the Xendroid+ emulator
-  package and action. This is a manifest declaration, not a permission.
+  LAUNCHER, which a home-screen launcher needs to list apps). This is a manifest declaration, not a permission.
 - **Default handler:** the app offers itself as a HOME app (category HOME). The user chooses
   it in Android's default-apps settings; the app never requests a role by itself.
 

@@ -20,7 +20,7 @@
 </head>
 <body>
 <h1>TilePivot — Privacy Policy</h1>
-<p class="muted">Last updated November 11, 2026</p>
+<p class="muted">Last updated November 12, 2026</p>
 
 <p><strong>The short version: TilePivot collects no personal data.</strong> TilePivot does not
 have the Android internet permission, so it cannot send anything off your device. Its only
@@ -42,39 +42,64 @@ are deleted when you uninstall TilePivot or clear its data. They leave TilePivot
 use the in-app "back up settings" option, which saves them to a file in a location you choose.
 TilePivot does not upload that file anywhere.</p>
 
-<p><strong>A games folder, only if you pick one.</strong> If you choose a folder for the games
-library, TilePivot gets read-only access to that one folder, through Android's system folder
-picker. It reads file names and file headers there to list your games and show cover images.
-It never writes to the folder and cannot see anything outside it. You can remove the folder in
-TilePivot's settings, and you can revoke the access in Android's system settings at any time.
-The folder choice is not included in TilePivot's settings backup.</p>
+<p><strong>Your wallpaper's main colour.</strong> If you pick the "Wallpaper" theme, or a
+room's "Wallpaper" look, TilePivot asks Android for the wallpaper's main colour and uses it
+on your device to tint the theme or the room. It never copies or stores the wallpaper picture,
+and it asks Android for the colour again when it needs it instead of keeping a copy.</p>
 
 <p><strong>How often you open apps (for the home avatar).</strong> The avatar on your home
 screen can step in front of the app you have opened most this week. To know which app that is,
-TilePivot counts how many times you open each app from the launcher, per day. Only the app's
-package name and a count are kept, never what you do inside the app, and only for the last 14
-days; older days are deleted automatically. The counts stay in TilePivot's private storage on
+TilePivot counts how many times you open each app from the launcher, per day and per hour of
+the day. Only the app's package name, the day, the hour and a count are kept, never what you do
+inside the app, and only for the last 14 days; older days are deleted automatically. The same
+counts let the avatar walk over to the app you usually open at that time of day ("suggests
+apps", which you can turn off in settings); it waits for a week of history before it suggests
+anything. The counts stay in TilePivot's private storage on
 your device. They are not included in the "back up settings" file.</p>
 
 <p><strong>Notification access, only if you turn it on.</strong> The home avatar can walk over
-to an app's tile when that app posts a notification. This needs notification access, which
+to an app's tile when that app posts a notification, and the home screen can show a small
+"new notification" banner with that app's name and icon. These need notification access, which
 TilePivot never has unless you grant it yourself in Android's settings, and you can revoke it
 there at any time. When it is on, TilePivot uses only the name of the app that posted the
 notification, to find its tile. It never reads the notification's title, text, images or any
 other content, and it stores nothing about notifications.</p>
+
+<p><strong>The music playing, only if you turn it on.</strong> The home avatar can dance while
+music plays, and the music room can show the cover of the song. This option is off unless you
+turn it on, and it uses the same notification access described above, so Android only allows it
+while you have granted that access. When it is on, TilePivot reads whether music is playing and
+the current song's title, artist, album and cover image from Android's media controls, to start
+and stop the dance and show the cover. It keeps that information in memory only while the song
+plays: it is never written to storage, never included in the settings backup and never sent
+anywhere. TilePivot cannot hear or record the music itself.</p>
+
+<p><strong>Widgets from other apps, only ones you add.</strong> A home tile can show a
+widget from another app (a clock, a music player) if you choose "Show widget" on that tile.
+Android draws the widget inside the tile and handles your taps on it; TilePivot only gives
+it the space. TilePivot does not read, copy or store what the widget shows, and choosing
+"Remove widget" takes it off the tile completely.</p>
 
 <p><strong>Battery level and time of day.</strong> The home avatar looks sleepy late at night
 and when the battery is low, and perks up when you plug in the charger. TilePivot reads the
 battery level and charging state from Android's standard battery broadcast and the time from
 your device clock. Neither is stored.</p>
 
+<p><strong>Do Not Disturb.</strong> TilePivot reads whether Do Not Disturb is on. Android
+lets any app read this; it needs no permission and is separate from notification access.
+While Do Not Disturb is on, the home avatar stays calm: it does not hurry over to point
+things out, and its celebrations are kept quiet. TilePivot only reads the on or off state;
+it never changes your Do Not Disturb setting.</p>
+
 <p><strong>Your avatar and profile.</strong> Your avatar's look, where you placed it on the
 screen, and the profile name and picture you choose are stored only in TilePivot's private
 storage on your device.</p>
 
-<p><strong>Launching a game.</strong> When you open a game, TilePivot hands its file path and
-title to the separate emulator app you installed (for example Xendroid+), on your device. That
-app is not part of TilePivot and has its own privacy practices.</p>
+<p><strong>TilePivot's widgets on other home screens.</strong> TilePivot also offers two
+widgets of its own for other launchers: your avatar on its own, and your avatar in its room.
+If you add one, TilePivot draws the picture on your device from the avatar look and room
+decoration you saved in the app, each time the widget updates. Nothing about the picture is
+stored anywhere new, and nothing is sent anywhere.</p>
 
 <h2>Data sharing</h2>
 <p>TilePivot shares no data with anyone. It collects none, and it has no way to send any.</p>
